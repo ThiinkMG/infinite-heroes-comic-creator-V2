@@ -1072,7 +1072,13 @@ const App: React.FC = () => {
       if (idx !== -1) historyRef.current[idx] = { ...historyRef.current[idx], ...updates };
   };
 
-  /** Open a lettering editor on the page currently being viewed. */
+  /**
+   * Open a lettering editor, starting on the page currently being viewed.
+   *
+   * The editor itself carries a page picker, so the reader's position is only a
+   * starting point — you can letter any rendered page without closing and
+   * re-opening on a different spread.
+   */
   const openLetteringEditor = (tool: 'bubbles' | 'sfx') => {
       const pageIndex = currentSheetIndex === 0 ? 0 : (currentSheetIndex - 1) * 2 + 1;
       const face = comicFaces.find(fc => fc.pageIndex === pageIndex && fc.imageUrl)
@@ -1083,6 +1089,18 @@ const App: React.FC = () => {
       }
       setLetteringTarget({ faceId: face.id, tool });
   };
+
+  /** Pages that have art, for the editors' page picker. */
+  const letterablePages = comicFaces
+      .filter(fc => fc.imageUrl)
+      .sort((a, b) => (a.pageIndex ?? 0) - (b.pageIndex ?? 0))
+      .map(fc => ({
+          id: fc.id,
+          label: fc.type === 'cover' ? 'Cover'
+              : fc.type === 'back_cover' ? 'Back Cover'
+              : `Page ${fc.pageIndex}`,
+          hasLettering: Boolean(fc.bubbles?.length || fc.sfx?.length),
+      }));
 
   const handleBubblesChange = (faceId: string, bubbles: SpeechBubble[]) => {
       updateFaceState(faceId, { bubbles });
@@ -3878,6 +3896,9 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           return letteringTarget.tool === 'bubbles' ? (
               <BubbleEditor
                   panelImage={face.imageUrl}
+                  pages={letterablePages}
+                  currentPageId={face.id}
+                  onPageChange={(id) => setLetteringTarget({ faceId: id, tool: 'bubbles' })}
                   initialBubbles={face.bubbles}
                   characters={[getHero(), getFriend(), ...getAdditionalChars()]
                       .filter(Boolean)
@@ -3888,6 +3909,9 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           ) : (
               <SFXEditor
                   panelImage={face.imageUrl}
+                  pages={letterablePages}
+                  currentPageId={face.id}
+                  onPageChange={(id) => setLetteringTarget({ faceId: id, tool: 'sfx' })}
                   initialSFX={face.sfx}
                   onSFXChange={(sfx) => handleSFXChange(face.id, sfx)}
                   onClose={() => setLetteringTarget(null)}

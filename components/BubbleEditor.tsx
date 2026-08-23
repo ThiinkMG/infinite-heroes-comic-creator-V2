@@ -37,6 +37,14 @@ export interface BubbleEditorProps {
   characters?: { id: string; name: string }[];
   /** Callback when bubbles change */
   onBubblesChange: (bubbles: SpeechBubble[]) => void;
+  /**
+   * Every page with art, so the target can be changed without closing the editor.
+   */
+  pages?: Array<{ id: string; label: string; hasLettering: boolean }>;
+  /** The page currently being edited. */
+  currentPageId?: string;
+  /** Switch to another page. */
+  onPageChange?: (pageId: string) => void;
   /** Callback to close the editor */
   onClose: () => void;
 }
@@ -74,6 +82,9 @@ export const BubbleEditor: React.FC<BubbleEditorProps> = ({
   initialBubbles = [],
   characters = [],
   onBubblesChange,
+  pages,
+  currentPageId,
+  onPageChange,
   onClose,
 }) => {
   // State
@@ -107,20 +118,37 @@ export const BubbleEditor: React.FC<BubbleEditorProps> = ({
     }
   }, []);
 
-  // Update dimensions on resize
+  /*
+   * Track the panel's real size.
+   *
+   * panelDimensions starts at a hardcoded 800x600 and was only corrected by the
+   * image's onLoad. A cached image often does not fire onLoad, so the editor
+   * kept the placeholder size — which put every drag and resize handle in the
+   * wrong place, and made the whole editor feel broken. A ResizeObserver also
+   * catches the panel reflowing when the sidebar opens or the window changes.
+   */
   useEffect(() => {
-    const handleResize = () => {
-      if (imageRef.current) {
-        setPanelDimensions({
-          width: imageRef.current.clientWidth,
-          height: imageRef.current.clientHeight,
-        });
+    const el = imageRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      if (el.clientWidth > 0 && el.clientHeight > 0) {
+        setPanelDimensions({ width: el.clientWidth, height: el.clientHeight });
       }
     };
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    // A cached image is already complete by the time this runs.
+    if (el.complete) measure();
+    measure();
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [panelImage]);
 
   // Handle panel click (place bubble or set tail target)
   const handlePanelClick = useCallback(
@@ -545,6 +573,23 @@ export const BubbleEditor: React.FC<BubbleEditorProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
           <h2 className="text-xl font-bold text-white">Speech Bubble Editor</h2>
+          {pages && pages.length > 1 && onPageChange && (
+            <label className="flex items-center gap-2">
+              <span className="text-xs uppercase text-gray-400">Page</span>
+              <select
+                value={currentPageId ?? ''}
+                onChange={(e) => onPageChange(e.target.value)}
+                className="bg-gray-800 text-white border border-gray-600 rounded px-2 py-1 text-sm"
+                aria-label="Choose which page to letter"
+              >
+                {pages.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}{p.hasLettering ? ' •' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-400">
               {bubbles.length} bubble{bubbles.length !== 1 ? 's' : ''}

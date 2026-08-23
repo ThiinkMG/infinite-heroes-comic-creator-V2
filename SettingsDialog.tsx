@@ -239,12 +239,15 @@ export const SettingsDialog: React.FC<Props> = ({ serverKeyExists, anthropicServ
 
     return (
         <div className="fixed inset-0 z-[600] bg-black/85 backdrop-blur-md flex items-center justify-center p-4" onClick={onClose}>
-            <div 
-                className="max-w-[500px] w-full bg-white border-[6px] border-black shadow-[10px_10px_0px_rgba(0,0,0,0.6)] flex flex-col"
+            <div
+                className="max-w-[760px] w-full max-h-[90vh] bg-white border-[6px] border-black shadow-[10px_10px_0px_rgba(0,0,0,0.6)] flex flex-col"
                 onClick={e => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Settings"
             >
                 {/* Header */}
-                <div className="bg-gray-900 border-b-[4px] border-black px-6 py-3 flex justify-between items-center">
+                <div className="bg-gray-900 border-b-[4px] border-black px-6 py-3 flex justify-between items-center shrink-0">
                     <h2 className="font-comic text-2xl text-white uppercase tracking-wider">⚙️ Settings</h2>
                     <button
                         onClick={onClose}
@@ -254,7 +257,7 @@ export const SettingsDialog: React.FC<Props> = ({ serverKeyExists, anthropicServ
                     >✕</button>
                 </div>
 
-                <div className="p-5 flex flex-col gap-5">
+                <div className="p-5 flex flex-col gap-5 overflow-y-auto flex-1 min-h-0">
                     {/* Status Banner */}
                     {isAdmin && (
                         <div className="bg-green-100 border-[3px] border-green-600 p-3 flex items-center justify-between">
@@ -671,7 +674,10 @@ export const SettingsDialog: React.FC<Props> = ({ serverKeyExists, anthropicServ
                         )}
                     </div>
 
-                    {/* Help & Resources */}
+                    {/* Help and Reset sit side by side on wider screens: both are
+                        short, and stacking every section is what pushed the dialog
+                        past the bottom of the viewport. */}
+                    <div className="grid gap-5 sm:grid-cols-2">
                     <div className="border-[3px] border-gray-400 bg-gray-50 p-4">
                         <p className="font-comic text-sm font-bold uppercase text-gray-800 mb-2">📖 Help & Resources</p>
                         <div className="flex gap-2">
@@ -702,6 +708,7 @@ export const SettingsDialog: React.FC<Props> = ({ serverKeyExists, anthropicServ
                         >
                             Reset Everything
                         </button>
+                    </div>
                     </div>
 
                     {/* Feedback */}

@@ -54,6 +54,14 @@ export interface SFXEditorProps {
   initialSFX?: PlacedSFX[];
   /** Callback when SFX placements change */
   onSFXChange: (sfx: PlacedSFX[]) => void;
+  /**
+   * Every page with art, so the target can be changed without closing the editor.
+   */
+  pages?: Array<{ id: string; label: string; hasLettering: boolean }>;
+  /** The page currently being edited. */
+  currentPageId?: string;
+  /** Switch to another page. */
+  onPageChange?: (pageId: string) => void;
   /** Callback to close the editor */
   onClose: () => void;
 }
@@ -387,6 +395,9 @@ export const SFXEditor: React.FC<SFXEditorProps> = ({
   panelImage,
   initialSFX = [],
   onSFXChange,
+  pages,
+  currentPageId,
+  onPageChange,
   onClose,
 }) => {
   // State
@@ -593,6 +604,23 @@ export const SFXEditor: React.FC<SFXEditorProps> = ({
           <h2 className="font-comic font-bold text-lg sm:text-xl uppercase text-yellow-900">
             SFX Editor
           </h2>
+          {pages && pages.length > 1 && onPageChange && (
+            <label className="flex items-center gap-2">
+              <span className="font-comic text-[10px] uppercase text-yellow-900">Page</span>
+              <select
+                value={currentPageId ?? ''}
+                onChange={(e) => onPageChange(e.target.value)}
+                className="font-comic text-xs border-2 border-black px-2 py-1 bg-white"
+                aria-label="Choose which page to letter"
+              >
+                {pages.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}{p.hasLettering ? ' •' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="flex items-center gap-2">
             {isPreviewMode && (
               <button
