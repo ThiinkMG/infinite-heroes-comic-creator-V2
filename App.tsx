@@ -47,6 +47,7 @@ import { useGenerateModelSheet, hasValidModelSheet } from './hooks/useGenerateMo
 import { useVisualQA, type QACharacterInput } from './hooks/useVisualQA';
 import { retryWithBackoff } from './utils/retryWithBackoff';
 import { convertToCmykSafe, analyzeGamut } from './utils/cmykExport';
+import { saveSnapshot, loadSnapshot, deleteSnapshot, pruneSnapshots } from './utils/sessionSnapshots';
 import { generationAnnouncement } from './utils/comicAccessibility';
 import { GenerationConfirmDialog, type GenerationPlan } from './components/GenerationConfirmDialog';
 import type { ModelSheetState } from './components/ModelSheetStrip';
@@ -63,6 +64,16 @@ import { DriftWarningToast } from './components/DriftWarningToast';
 const MODEL_IMAGE_GEN_NAME = "gemini-3-pro-image-preview";
 const MODEL_TEXT_NAME = "gemini-2.5-pro"; // Gemini fallback
 const MODEL_TEXT_NAME_CLAUDE = "claude-sonnet-4-5-20250929";
+
+/**
+ * How many sessions keep a restorable snapshot.
+ *
+ * The session list holds 50 entries, but a snapshot runs to roughly 10MB, so
+ * snapshotting all of them would mean hundreds of megabytes of IndexedDB.
+ * Older sessions keep their metadata row and can still be recovered from an
+ * exported draft file.
+ */
+const MAX_SESSION_SNAPSHOTS = 10;
 
 // --- Storage Constants ---
 const STORAGE_LIMIT = 5 * 1024 * 1024; // 5MB typical localStorage limit
@@ -389,6 +400,15 @@ const App: React.FC = () => {
     });
   }, [comicFaces]);
 
+  /**
+   * Debounce handle for snapshot writes.
+   *
+   * The metadata effect fires on every comicFaces change, and a snapshot runs to
+   * tens of megabytes, so writing one per change would thrash IndexedDB during
+   * generation.
+   */
+  const snapshotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // --- Auto-save session metadata when comic generation progresses ---
   useEffect(() => {
     if (!isStarted || comicFaces.length === 0) return;
@@ -407,7 +427,46 @@ const App: React.FC = () => {
       createdAt: parseInt(sessionIdRef.current, 36),
       updatedAt: Date.now()
     });
+
+    // Metadata alone cannot be restored from, so persist the full state too.
+    // Debounced, and deliberately fire-and-forget: a failed snapshot must never
+    // interrupt generation.
+    if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
+    const sessionId = sessionIdRef.current;
+    snapshotTimerRef.current = setTimeout(() => {
+      saveSnapshot(sessionId, buildDraftSnapshot())
+        .then(r => {
+          if (!r.success) {
+            console.warn('[session] snapshot failed:', r.error);
+            return;
+          }
+          console.log(`[session] snapshot saved (${Math.round((r.data?.size ?? 0) / 1024)}KB)`);
+          // Keep only the most recent snapshots so storage stays bounded.
+          const recent = useSessionHistoryStore.getState().sessions
+            .slice(0, MAX_SESSION_SNAPSHOTS)
+            .map(x => x.id);
+          return pruneSnapshots(recent).then(p => {
+            if (p.success && p.data) console.log(`[session] pruned ${p.data} old snapshot(s)`);
+          });
+        })
+        .catch(e => console.warn('[session] snapshot threw:', e));
+    }, 3000);
+
+    return () => {
+      if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
+    };
   }, [comicFaces, isStarted]);
+
+  // --- Drop snapshots whose session row no longer exists ---
+  useEffect(() => {
+    const ids = useSessionHistoryStore.getState().sessions
+      .slice(0, MAX_SESSION_SNAPSHOTS)
+      .map(x => x.id);
+    pruneSnapshots(ids)
+      .then(r => { if (r.success && r.data) console.log(`[session] pruned ${r.data} orphaned snapshot(s)`); })
+      .catch(() => { /* pruning is housekeeping; failure is not user-facing */ });
+    // Runs once on mount: sessions can be deleted while the tab is closed.
+  }, []);
 
   // --- Sync currentSheetIndex to Zustand store ---
   useEffect(() => {
@@ -2395,9 +2454,15 @@ Create a powerful, memorable conclusion that honors the user's story path.
     handleStoryContextUpdate({ descriptionFiles: storyContext.descriptionFiles.filter((_, i) => i !== index) });
   };
 
-  const exportDraft = () => {
+  /**
+   * Serialize the full working state.
+   *
+   * Shared by file export and per-session snapshots so the two can never drift
+   * apart — a field added here is automatically covered by both.
+   */
+  const buildDraftSnapshot = (): Record<string, unknown> => {
     const store = useCharacterStore.getState();
-    const data = JSON.stringify({
+    return {
         comicFaces,
         history: historyRef.current,
         hero,
@@ -2413,7 +2478,110 @@ Create a powerful, memorable conclusion that honors the user's story path.
         customPremise,
         characterProfiles: Array.from(store.characterProfiles.entries()),
         characterLocks: Array.from(store.characterLocks.entries()),
-    });
+    };
+  };
+
+  /**
+   * Apply a serialized draft to live state.
+   *
+   * @returns true when the draft contained rendered pages, meaning the reader
+   *          should be opened rather than the setup form.
+   */
+  const restoreDraftSnapshot = (parsed: Record<string, any>): boolean => {
+    /**
+     * Settle any page that was captured mid-flight.
+     *
+     * A snapshot taken during generation stores faces with isLoading: true.
+     * After a restore nothing is generating, so those pages would sit on
+     * "Inking page..." forever with no way to progress. Pages that never
+     * produced art are marked failed instead, which surfaces the existing
+     * retry affordance.
+     */
+    const settle = (faces: ComicFace[] = []): ComicFace[] =>
+      faces.map(face => ({
+        ...face,
+        isLoading: false,
+        hasFailed: face.hasFailed ?? !face.imageUrl,
+      }));
+
+    setComicFaces(settle(parsed.comicFaces));
+    historyRef.current = settle(parsed.history);
+    setHero(parsed.hero || null);
+    setFriend(parsed.friend || null);
+    const importCharsStore = useCharacterStore.getState();
+    importCharsStore.clearAdditionalCharacters();
+    (parsed.additionalCharacters || []).forEach((c: Persona) => importCharsStore.addCharacter(c));
+    setStoryContext(prev => ({ ...prev, ...(parsed.storyContext || {}) }));
+    setExtraPages(parsed.extraPages || 0);
+
+    if (parsed.storyOutline) setStoryOutline(parsed.storyOutline);
+    if (parsed.generateFromOutline !== undefined) {
+      setGenerateFromOutline(parsed.generateFromOutline);
+      // Keep the ref in step: generateBatch reads it, not the state value.
+      generateFromOutlineRef.current = parsed.generateFromOutline;
+    }
+    if (parsed.richMode !== undefined) setRichMode(parsed.richMode);
+    if (parsed.selectedGenre) setSelectedGenre(parsed.selectedGenre);
+    if (parsed.selectedLanguage) setSelectedLanguage(parsed.selectedLanguage);
+    if (parsed.customPremise !== undefined) setCustomPremise(parsed.customPremise);
+
+    // Sync character profiles to Zustand (clear stale data from previous session)
+    const importStore = useCharacterStore.getState();
+    if (parsed.characterProfiles && Array.isArray(parsed.characterProfiles)) {
+      importStore.setAllProfiles(
+        (parsed.characterProfiles as [string, CharacterProfile][]).map(([, p]) => p)
+      );
+    } else {
+      // Old format draft or no profiles — clear stale profiles from previous session
+      importStore.setAllProfiles([]);
+    }
+    // Always clear compiled references on import (rebuilt fresh from profiles)
+    importStore.clearCharacterReferences();
+
+    const hasPages = Boolean(parsed.comicFaces?.some((f: ComicFace) => f.imageUrl));
+    if (hasPages) {
+        setIsStarted(true);
+        setShowSetup(false);
+        setIsTransitioning(false);
+        setCurrentSheetIndex(1);
+    }
+    return hasPages;
+  };
+
+  /**
+   * Reload a past session from its stored snapshot.
+   *
+   * Returns a human-readable reason on failure so the caller can tell the user
+   * why nothing happened — a silent no-op is what made this feature look broken
+   * in the first place.
+   */
+  const handleRestoreSession = async (sessionId: string): Promise<string | null> => {
+    const result = await loadSnapshot(sessionId);
+    if (!result.success || !result.data) {
+      // Sessions logged before snapshots existed have metadata but no state.
+      return result.error === 'no snapshot stored for this session'
+        ? `Full state is only kept for the ${MAX_SESSION_SNAPSHOTS} most recent sessions. Import this one's draft file instead.`
+        : (result.error || 'Could not read this session.');
+    }
+    try {
+      restoreDraftSnapshot(result.data as Record<string, any>);
+      // Continue writing to the session that was just reopened, rather than
+      // forking a new one and leaving the original frozen.
+      sessionIdRef.current = sessionId;
+      return null;
+    } catch (e) {
+      console.error('[session] restore failed', e);
+      return 'This session could not be restored — its saved data may be damaged.';
+    }
+  };
+
+  /** Delete a session's snapshot alongside its metadata row. */
+  const handleDeleteSessionSnapshot = (sessionId: string) => {
+    deleteSnapshot(sessionId).catch(e => console.warn('[session] snapshot delete failed', e));
+  };
+
+  const exportDraft = () => {
+    const data = JSON.stringify(buildDraftSnapshot());
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2438,45 +2606,8 @@ Create a powerful, memorable conclusion that honors the user's story path.
           if (!text || !text.trim().startsWith('{')) { console.warn('Invalid draft file format.'); return; }
           const parsed = JSON.parse(text);
           console.log('[importDraft] Parsed keys:', Object.keys(parsed));
-          setComicFaces(parsed.comicFaces || []);
-          historyRef.current = parsed.history || [];
-          setHero(parsed.hero || null);
-          setFriend(parsed.friend || null);
-          const importCharsStore = useCharacterStore.getState();
-          importCharsStore.clearAdditionalCharacters();
-          (parsed.additionalCharacters || []).forEach((c: Persona) => importCharsStore.addCharacter(c));
-          setStoryContext(prev => ({ ...prev, ...(parsed.storyContext || {}) }));
-          setExtraPages(parsed.extraPages || 0);
-
-          if (parsed.storyOutline) setStoryOutline(parsed.storyOutline);
-          if (parsed.generateFromOutline !== undefined) setGenerateFromOutline(parsed.generateFromOutline);
-          if (parsed.richMode !== undefined) setRichMode(parsed.richMode);
-          if (parsed.selectedGenre) setSelectedGenre(parsed.selectedGenre);
-          if (parsed.selectedLanguage) setSelectedLanguage(parsed.selectedLanguage);
-          if (parsed.customPremise !== undefined) setCustomPremise(parsed.customPremise);
-
-          // Sync character profiles to Zustand (clear stale data from previous session)
-          const importStore = useCharacterStore.getState();
-          if (parsed.characterProfiles && Array.isArray(parsed.characterProfiles)) {
-            // Restore profiles from draft (new format with profiles included)
-            importStore.setAllProfiles(
-              (parsed.characterProfiles as [string, CharacterProfile][]).map(([, p]) => p)
-            );
-          } else {
-            // Old format draft or no profiles — clear stale profiles from previous session
-            importStore.setAllProfiles([]);
-          }
-          // Always clear compiled references on import (rebuilt fresh from profiles)
-          importStore.clearCharacterReferences();
-
-          if (parsed.comicFaces && parsed.comicFaces.length > 0) {
-              setIsStarted(true);
-              setShowSetup(false);
-              setIsTransitioning(false);
-              setCurrentSheetIndex(1);
-          } else {
-              console.log("Setup fields populated successfully!");
-          }
+          const hasPages = restoreDraftSnapshot(parsed);
+          if (!hasPages) console.log("Setup fields populated successfully!");
         } catch(err) {
           console.error('Draft parse error:', err);
           console.error("Invalid draft file. Could not parse JSON."); 
@@ -3034,6 +3165,8 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           skipProfileAnalysis={skipProfileAnalysis}
           onSkipProfileAnalysisChange={setSkipProfileAnalysis}
           modelSheetProps={modelSheetProps}
+          onRestoreSession={handleRestoreSession}
+          onDeleteSessionSnapshot={handleDeleteSessionSnapshot}
           useSavedProfiles={useSavedProfiles}
           onUseSavedProfilesChange={setUseSavedProfiles}
           hasStaleSavedProfiles={hasStaleSavedProfiles}

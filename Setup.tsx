@@ -90,6 +90,13 @@ interface SetupProps {
      * model sheet is something you decide about while configuring the cast —
      * and because the launch flow can skip the profiles dialog entirely.
      */
+    /**
+     * Reload a past session. Resolves to null on success, or a message
+     * explaining why it could not be restored.
+     */
+    onRestoreSession?: (sessionId: string) => Promise<string | null>;
+    /** Remove a session's stored snapshot when its row is deleted. */
+    onDeleteSessionSnapshot?: (sessionId: string) => void;
     modelSheetProps?: {
         characters: Persona[];
         artStyle: string;
@@ -157,6 +164,26 @@ export const Setup: React.FC<SetupProps> = (props) => {
 
     // Session history store for Feature E
     const { sessions, remove: removeSession } = useSessionHistoryStore();
+    /** Session currently being restored, so the row can show progress. */
+    const [restoringSessionId, setRestoringSessionId] = useState<string | null>(null);
+    /** Why the last restore attempt failed, shown inline on that row. */
+    const [restoreError, setRestoreError] = useState<{ id: string; message: string } | null>(null);
+
+    const handleSessionClick = async (sessionId: string) => {
+        if (!props.onRestoreSession || restoringSessionId) return;
+        setRestoreError(null);
+        setRestoringSessionId(sessionId);
+        try {
+            const error = await props.onRestoreSession(sessionId);
+            if (error) {
+                setRestoreError({ id: sessionId, message: error });
+            } else {
+                setShowSessionHistory(false);
+            }
+        } finally {
+            setRestoringSessionId(null);
+        }
+    };
     const [showSessionHistory, setShowSessionHistory] = useState(false);
     const [sessionSortKey, setSessionSortKey] = useState<'date_desc' | 'date_asc' | 'mode'>('date_desc');
     const [sessionFilterMode, setSessionFilterMode] = useState<'all' | 'novel' | 'outline' | 'single'>('all');
@@ -1052,15 +1079,29 @@ export const Setup: React.FC<SetupProps> = (props) => {
                               <p className="text-center font-comic text-gray-400 p-8">No sessions found.</p>
                           ) : (
                               filteredSessions.map(session => (
-                                  <div key={session.id} className="flex items-center gap-3 p-3 border-b border-gray-200 hover:bg-gray-50">
+                                  <div key={session.id} className="border-b border-gray-200">
+                                    <div className="flex items-center gap-3 p-3 hover:bg-gray-50">
                                       {/* Thumbnail */}
                                       {session.thumbnail ? (
                                           <img src={session.thumbnail} alt="" className="w-10 h-14 object-cover border-2 border-gray-300 shrink-0" />
                                       ) : (
                                           <div className="w-10 h-14 bg-gray-200 border-2 border-gray-300 shrink-0 flex items-center justify-center text-gray-400 text-xs">📄</div>
                                       )}
-                                      <div className="flex-1 min-w-0">
-                                          <p className="font-comic text-sm font-bold truncate">{session.title || 'Untitled'}</p>
+                                      {/* The row itself reloads the session. A real <button> so it is
+                                          reachable by keyboard, not a div with a click handler. */}
+                                      <button
+                                          type="button"
+                                          onClick={() => handleSessionClick(session.id)}
+                                          disabled={!props.onRestoreSession || restoringSessionId !== null}
+                                          aria-label={`Reload session ${session.title || 'Untitled'}, ${session.mode} mode, ${session.pageCount} page${session.pageCount !== 1 ? 's' : ''}`}
+                                          className="flex-1 min-w-0 text-left disabled:cursor-wait"
+                                      >
+                                          <p className="font-comic text-sm font-bold truncate">
+                                            {session.title || 'Untitled'}
+                                            {restoringSessionId === session.id && (
+                                              <span className="ml-2 text-[10px] text-blue-600 uppercase">Loading…</span>
+                                            )}
+                                          </p>
                                           <div className="flex items-center gap-2 flex-wrap">
                                               <span className={`text-white text-[10px] px-1.5 py-0.5 font-comic font-bold ${session.mode === 'novel' ? 'bg-blue-600' : session.mode === 'outline' ? 'bg-purple-600' : 'bg-green-600'}`}>
                                                   {session.mode}
@@ -1071,22 +1112,32 @@ export const Setup: React.FC<SetupProps> = (props) => {
                                           <p className="text-[10px] text-gray-400 font-comic">
                                               {new Date(session.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                                           </p>
-                                      </div>
+                                      </button>
                                       <button
-                                          onClick={() => removeSession(session.id)}
+                                          onClick={() => {
+                                              removeSession(session.id);
+                                              // Otherwise the snapshot outlives its row and IndexedDB grows unbounded.
+                                              props.onDeleteSessionSnapshot?.(session.id);
+                                          }}
                                           className="text-red-400 hover:text-red-600 text-sm font-bold shrink-0 p-1"
                                           title="Delete session"
-                                          aria-label="Delete session"
+                                          aria-label={`Delete session ${session.title || 'Untitled'}`}
                                       >
                                           🗑
                                       </button>
+                                    </div>
+                                    {restoreError?.id === session.id && (
+                                      <p role="alert" className="font-comic text-[11px] text-red-700 px-3 pb-2">
+                                        {restoreError.message}
+                                      </p>
+                                    )}
                                   </div>
                               ))
                           )}
                       </div>
 
                       <div className="p-3 border-t-2 border-gray-200 flex justify-between items-center">
-                          <p className="font-comic text-xs text-gray-500">Sessions are logged when you generate a comic. Load a draft file to restore full session state.</p>
+                          <p className="font-comic text-xs text-gray-500">Click a session to reload it. Sessions are saved automatically as you generate.</p>
                           <button onClick={() => setShowSessionHistory(false)} className="comic-btn bg-gray-400 text-white text-sm px-3 py-1.5 border-2 border-black hover:bg-gray-300 font-bold">Close</button>
                       </div>
                   </div>
