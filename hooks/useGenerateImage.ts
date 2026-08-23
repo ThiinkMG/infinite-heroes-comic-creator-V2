@@ -24,6 +24,8 @@ import {
   getFlashbackInstructions,
 } from '../types';
 import { detectImageMimeType } from '../claudeHelpers';
+import { buildV2Prompt, type V2Character } from './promptAssemblerV2';
+import { recordGenerationTime } from '../utils/timeEstimation';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import { useMetricsStore } from '../stores/useMetricsStore';
@@ -229,6 +231,9 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
       selectedLanguage,
       reAnchorEveryN = 2,
       referenceImagePriority = true,
+      promptMode = 'v2',
+      imageResolution = '1k',
+      useModelSheets = true,
     } = useSettingsStore.getState();
     // Feature F: consistencyMode forces maximum strength for this generation call
     const consistencyStrength = consistencyMode ? 1.0 : (useSettingsStore.getState().consistencyStrength ?? 1.0);
@@ -312,6 +317,103 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
       if (p.role === 'Family/Friend' || p.role === 'Custom') return p.customRole || p.role;
       return p.role;
     };
+
+    // ==========================================================================
+    // V2 PROMPT PATH (default). Builds the request with each character fact
+    // stated exactly once. Legacy multi-block path follows below, kept so the
+    // eval harness can A/B the two assemblers.
+    // ==========================================================================
+    if (promptMode === 'v2') {
+      const locks = getCharacterLocks();
+      const preserveSet = new Set(params.preserveCharacterIds ?? []);
+
+      const focusKey = beat.focus_char;
+      const focusPersona: Persona | null =
+        focusKey === 'hero' ? (hero ?? null) :
+        focusKey === 'friend' ? (friend ?? null) :
+        focusKey ? (additionalChars.find(c => c.name === focusKey || c.id === focusKey) ?? null) :
+        null;
+
+      const roster: Array<{ persona: Persona; role: string }> = [
+        ...(hero ? [{ persona: hero, role: 'hero' }] : []),
+        ...(friend ? [{ persona: friend, role: 'co-star' }] : []),
+        ...additionalChars.map(c => ({ persona: c, role: (getRoleLabel(c) || 'supporting').toLowerCase() })),
+      ];
+
+      // Page-scope to the cast the outline actually places on this page.
+      const onPage = roster.filter(({ persona }) =>
+        activeProfiles.length === 0 ||
+        activeProfiles.some(p => p.id === persona.id || p.name === persona.name)
+      );
+
+      const toV2 = ({ persona, role }: { persona: Persona; role: string }): V2Character => {
+        const emb = getEmblemDesc(persona);
+        const wpn = getWeaponDesc(persona);
+        // A model sheet already rendered in the target style beats a raw photo:
+        // style transfer is solved once instead of re-solved on every page.
+        const sheet = useModelSheets && persona.modelSheetStyle === storyContext.artStyle
+          ? persona.modelSheet
+          : undefined;
+        return {
+          persona,
+          profile: findProfileByName(persona.name, profiles),
+          roleLabel: role,
+          referenceImage: sheet || persona.base64 || undefined,
+          isModelSheet: Boolean(sheet),
+          outfitRefs: getAllRefs(persona),
+          emblem: emb ? { image: emb.image, placement: emb.placement } : undefined,
+          weapon: wpn ? { image: wpn.image, description: wpn.description } : undefined,
+          locks: locks.get(persona.id),
+          isPreserved: preserveSet.has(persona.id),
+        };
+      };
+
+      // Gemini weights later images most heavily: preserved first, focus last.
+      const ordered = [
+        ...onPage.filter(r => preserveSet.has(r.persona.id)),
+        ...onPage.filter(r => !preserveSet.has(r.persona.id) && r.persona !== focusPersona),
+        ...onPage.filter(r => !preserveSet.has(r.persona.id) && r.persona === focusPersona),
+      ];
+
+      const sceneCtx: Array<{ base64: string; label: string }> = [];
+      if (prevImage && prevBeat) sceneCtx.push({ base64: prevImage, label: 'Previous page:' });
+      (adjacentPageImages ?? []).forEach(a => sceneCtx.push({ base64: a.base64, label: a.label }));
+
+      const v2PagePlan = pageIndex !== undefined
+        ? storyOutline.pageBreakdown?.find(p => p.pageIndex === pageIndex)
+        : undefined;
+
+      const v2 = buildV2Prompt({
+        beat,
+        type,
+        storyContext,
+        genre: selectedGenre,
+        characters: useOnlySelectedRefs ? [] : ordered.map(toV2),
+        sceneContext: sceneCtx.length ? sceneCtx : undefined,
+        preserveImage: currentImageToPreserve,
+        instruction,
+        shotType: comicOverrides?.shotTypeOverride || v2PagePlan?.suggestedShot,
+        isFlashback: comicOverrides?.applyFlashbackStyle ?? v2PagePlan?.isFlashback,
+        balloonShape: comicOverrides?.balloonShapeOverride,
+        panelLayout: v2PagePlan?.panelLayout,
+        location: v2PagePlan?.location,
+        publisherLogo: (type === 'cover' && !storyContext.useOverlayLogo) ? storyContext.publisherLogo : undefined,
+        consistencyStrength,
+        compact: compactMode,
+      }, detectImageMimeType);
+
+      if (extraRefImages?.length) {
+        const label = useOnlySelectedRefs
+          ? 'Selected reference — match this character exactly:'
+          : 'Additional reference:';
+        extraRefImages.forEach(ref => {
+          v2.contents.push({ text: label });
+          v2.contents.push(createInlineImage(ref.includes(',') ? ref.split(',')[1] : ref));
+        });
+      }
+
+      return executeGeneration(v2.contents, v2.promptText);
+    }
 
     // Helper to get inline identity from profile — all 5 fields to minimize guessing
     // characterRoleDesc: actual Persona role (Villain, Sidekick, etc.) for visual context
@@ -519,7 +621,7 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
 
         // Configurable re-anchor interval (Feature E): uses reAnchorEveryN from settings
         if (pageIndex !== undefined && pageIndex >= reAnchorEveryN && pageIndex % reAnchorEveryN === 0) {
-          const charList = profiles.map(p => p.name.toUpperCase()).join(', ');
+          const charList = activeProfiles.map(p => p.name.toUpperCase()).join(', ');
           contents.push({ text: `\nPage ${pageIndex} re-anchor: faces must match the portrait images above for ${charList}.` });
         }
 
@@ -533,7 +635,7 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
     } else {
       // Scene-first: re-anchor still fires but after scene images
       if (!useOnlySelectedRefs && pageIndex !== undefined && pageIndex >= reAnchorEveryN && pageIndex % reAnchorEveryN === 0) {
-        const charList = profiles.map(p => p.name.toUpperCase()).join(', ');
+        const charList = activeProfiles.map(p => p.name.toUpperCase()).join(', ');
         contents.push({ text: `\nPage ${pageIndex} re-anchor: faces must match the portrait images above for ${charList}.` });
       }
     }
@@ -772,8 +874,8 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
       }
 
       // Maximum consistency: add extra face-lock reinforcement line (Feature E, strength = 1.0)
-      if (consistencyStrength >= 1.0 && profiles.length > 0) {
-        const faceList = profiles.map(p => {
+      if (consistencyStrength >= 1.0 && activeProfiles.length > 0) {
+        const faceList = activeProfiles.map(p => {
           const ih = p.identityHeader;
           return ih ? `${p.name.toUpperCase()} (${ih.face}, ${ih.hair})` : p.name.toUpperCase();
         }).join('; ');
@@ -792,10 +894,22 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
     // Push the post-image prompt text
     contents.push({ text: promptText });
 
-    // Log contents summary
-    const imageCount = contents.filter(c => 'inlineData' in c).length;
-    const textCount = contents.filter(c => 'text' in c).length;
-    console.log(`[generateImage] Preparing API call - Images: ${imageCount}, Text blocks: ${textCount}, Prompt length: ${promptText.length} chars`);
+    return executeGeneration(contents, promptText);
+
+    /**
+     * Send an assembled request to the image model and normalise the result.
+     *
+     * Declared as a hoisted function so the v2 branch earlier in this body can
+     * call it, while both paths share one copy of the timeout, failure-reason,
+     * and metrics handling.
+     */
+    async function executeGeneration(
+      parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }>,
+      finalPrompt: string,
+    ): Promise<GenerateImageResult> {
+    const imageCount = parts.filter(c => 'inlineData' in c).length;
+    const textCount = parts.filter(c => 'text' in c).length;
+    console.log(`[generateImage] Preparing API call - Mode: ${promptMode}, Images: ${imageCount}, Text blocks: ${textCount}, Prompt length: ${finalPrompt.length} chars`);
 
     try {
       const ai = getAI();
@@ -811,8 +925,14 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
       const res = await Promise.race([
         ai.models.generateContent({
           model: MODEL_IMAGE_GEN_NAME,
-          contents: contents,
-          config: { imageConfig: { aspectRatio: '2:3' } }
+          contents: parts,
+          config: {
+            imageConfig: {
+              aspectRatio: '2:3',
+              // 1k at 2:3 is only ~130 DPI at comic trim size — too low for print.
+              imageSize: imageResolution.toUpperCase(),
+            },
+          },
         }),
         timeoutPromise,
       ]);
@@ -851,11 +971,13 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
         }
 
         useMetricsStore.getState().recordGeneration('image', false, Date.now() - startTime, 'gemini');
-        return { imageUrl: '', originalPrompt: promptText, failureReason };
+        return { imageUrl: '', originalPrompt: finalPrompt, failureReason };
       }
 
       useMetricsStore.getState().recordGeneration('image', true, Date.now() - startTime, 'gemini');
-      return { imageUrl, originalPrompt: promptText };
+      // Feeds the adaptive ETA so later runs estimate from this user's real speed.
+      recordGenerationTime(type === 'cover' ? 'cover' : 'image', Date.now() - startTime);
+      return { imageUrl, originalPrompt: finalPrompt };
     } catch (e) {
       const totalDuration = Date.now() - startTime;
       console.error(`[generateImage] FAILED after ${totalDuration}ms:`, e);
@@ -879,7 +1001,8 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
       }
 
       useMetricsStore.getState().recordGeneration('image', false, totalDuration, 'gemini');
-      return { imageUrl: '', originalPrompt: promptText, failureReason };
+      return { imageUrl: '', originalPrompt: finalPrompt, failureReason };
+    }
     }
   };
 

@@ -9,6 +9,7 @@
 import { GoogleGenAI } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
 import {
+  ArtDirection,
   Beat,
   ComicFace,
   Persona,
@@ -120,6 +121,42 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
     return p.role;
   };
 
+  /**
+   * Coerce the model's `art` object into a valid ArtDirection.
+   * Returns undefined when the model omitted it or gave us nothing usable —
+   * callers fall back to the prose `scene` field.
+   */
+  const cleanArtDirection = (raw: unknown, sceneFallback: string): ArtDirection | undefined => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const o = raw as Record<string, unknown>;
+
+    const str = (v: unknown): string =>
+      typeof v === 'string' ? v.trim()
+        : Array.isArray(v) ? v.filter(x => typeof x === 'string').join(', ').trim()
+        : '';
+    const strArr = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map(x => x.trim())
+        : typeof v === 'string' && v.trim() ? [v.trim()]
+        : [];
+
+    const action = str(o.action);
+    const environment = str(o.environment);
+
+    // Both empty means the model gave us nothing better than the prose scene.
+    if (!action && !environment) return undefined;
+
+    return {
+      characters_present: strArr(o.characters_present),
+      subject: str(o.subject) || 'the hero',
+      action: action || sceneFallback,
+      environment: environment || 'the scene',
+      camera: str(o.camera) || undefined,
+      lighting: str(o.lighting) || undefined,
+      mood: str(o.mood) || undefined,
+      continuity: str(o.continuity) || undefined,
+    };
+  };
+
   // Helper to clean and validate beat response
   const cleanBeatResponse = (parsed: Record<string, unknown>, isDecisionPage: boolean, isFinalPage: boolean): Beat => {
     // Build result with defaults for required fields
@@ -129,6 +166,7 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
       scene: (parsed.scene as string) || '',
       focus_char: (parsed.focus_char as 'hero' | 'friend' | 'other') || 'hero',
       choices: (parsed.choices as string[]) || [],
+      art: cleanArtDirection(parsed.art, (parsed.scene as string) || ''),
     };
 
     if (result.dialogue) {
@@ -418,6 +456,16 @@ OUTPUT STRICT JSON ONLY (No markdown formatting):
   "caption": "Unique narrator text in ${langName}. (${capLimit}).",
   "dialogue": "Unique speech in ${langName}. (${diaLimit}). Optional.",
   "scene": "Vivid visual description (ALWAYS IN ENGLISH for the artist model). MUST explicitly name EVERY character present in the scene (Hero, Co-Star, or their exact given names).",
+  "art": {
+    "characters_present": ["hero" and/or "friend" and/or exact character names — ONLY those visible in this panel"],
+    "subject": "Who or what the panel is centered on (a character name).",
+    "action": "What the subject is DOING. Verb phrase only. NO location words. e.g. 'raises her blade overhead'",
+    "environment": "WHERE this happens. Setting only. NO action. e.g. 'flooded cathedral ruins, ankle-deep water'",
+    "camera": "Framing. e.g. 'low angle, medium shot'",
+    "lighting": "Light source and quality. e.g. 'hard rim light from a broken stained-glass window'",
+    "mood": "One or two words. e.g. 'defiant'",
+    "continuity": "What must visually match the previous page (time of day, weather, palette, location)."
+  },
   "focus_char": "hero" OR "friend" OR "other",
   "choices": ${isDecisionPage && !isFinalPage ? `["First choice: brief descriptive action in ${langName}", "Second choice: different action in ${langName}"] (REQUIRED - must be 2 distinct, descriptive actions the hero can take. NEVER use 'Option A' or 'Option B')` : `[] (empty array - not a decision page)`}
 }

@@ -55,6 +55,40 @@ export interface SettingsState {
    * Portraits appear last in the content array (highest weight position).
    */
   referenceImagePriority: boolean;
+
+  // === Prompt Engine (v2) ===
+  /**
+   * Which image-prompt assembler to use.
+   * 'v2' states each character's identity exactly once, adjacent to their portrait.
+   * 'legacy' is the original multi-block assembler, kept so the eval harness can A/B them.
+   */
+  promptMode: 'v2' | 'legacy';
+  /**
+   * Output resolution passed to the image model.
+   * '1k' for drafts, '2k'/'4k' for print export (1k at 2:3 is only ~130 DPI at comic trim size).
+   */
+  imageResolution: '1k' | '2k' | '4k';
+  /**
+   * Generate a character model sheet (turnaround + expressions) in the target art style
+   * and use it as the canonical reference instead of the raw user portrait.
+   */
+  useModelSheets: boolean;
+  /**
+   * After each page, score the render against the character reference with a vision model
+   * and automatically reroll pages that fall below `qaThreshold`.
+   */
+  qaAutoReroll: boolean;
+  /** Minimum acceptable QA score (0–10). Pages below this are rerolled when qaAutoReroll is on. */
+  qaThreshold: number;
+  /**
+   * How many pages may generate concurrently.
+   *
+   * Defaults to 1 because each page uses the previous page's rendered image as a
+   * background/lighting continuity reference — pages generated in parallel cannot
+   * see each other, so raising this trades scene continuity for wall-clock speed.
+   * Character consistency is unaffected (that comes from the model sheets).
+   */
+  maxConcurrentPages: number;
 }
 
 export interface ComicConfig {
@@ -82,6 +116,12 @@ export interface SettingsActions {
   setReAnchorEveryN: (value: number) => void;
   setAutoCharacterAnalysis: (value: boolean) => void;
   setReferenceImagePriority: (value: boolean) => void;
+  setPromptMode: (value: 'v2' | 'legacy') => void;
+  setImageResolution: (value: '1k' | '2k' | '4k') => void;
+  setUseModelSheets: (value: boolean) => void;
+  setQaAutoReroll: (value: boolean) => void;
+  setQaThreshold: (value: number) => void;
+  setMaxConcurrentPages: (value: number) => void;
 
   // Bulk operations
   resetSettings: () => void;
@@ -114,6 +154,12 @@ const getDefaultSettings = (): SettingsState => ({
   reAnchorEveryN: 2,         // Re-inject full reference every 2 pages
   autoCharacterAnalysis: true,
   referenceImagePriority: true,
+  promptMode: 'v2',
+  imageResolution: '1k',
+  useModelSheets: true,
+  qaAutoReroll: false,   // opt-in: costs one extra vision call per page
+  qaThreshold: 7,
+  maxConcurrentPages: 1,
 });
 
 // ============================================================================
@@ -159,6 +205,12 @@ export const useSettingsStore = create<SettingsStore>()(
       }),
 
       setReferenceImagePriority: (value) => set({ referenceImagePriority: value }),
+      setPromptMode: (value) => set({ promptMode: value }),
+      setImageResolution: (value) => set({ imageResolution: value }),
+      setUseModelSheets: (value) => set({ useModelSheets: value }),
+      setQaAutoReroll: (value) => set({ qaAutoReroll: value }),
+      setQaThreshold: (value) => set({ qaThreshold: Math.max(0, Math.min(10, value)) }),
+      setMaxConcurrentPages: (value) => set({ maxConcurrentPages: Math.max(1, Math.min(4, Math.round(value))) }),
 
       // Reset to defaults
       resetSettings: () => set(getDefaultSettings()),
@@ -207,6 +259,12 @@ export const useSettingsStore = create<SettingsStore>()(
         reAnchorEveryN: state.reAnchorEveryN,
         autoCharacterAnalysis: state.autoCharacterAnalysis,
         referenceImagePriority: state.referenceImagePriority,
+        promptMode: state.promptMode,
+        imageResolution: state.imageResolution,
+        useModelSheets: state.useModelSheets,
+        qaAutoReroll: state.qaAutoReroll,
+        qaThreshold: state.qaThreshold,
+        maxConcurrentPages: state.maxConcurrentPages,
       }),
     }
   )
@@ -236,3 +294,8 @@ export const useConsistencyStrength = () => useSettingsStore((state) => state.co
 export const useReAnchorEveryN = () => useSettingsStore((state) => state.reAnchorEveryN);
 export const useAutoCharacterAnalysis = () => useSettingsStore((state) => state.autoCharacterAnalysis);
 export const useReferenceImagePriority = () => useSettingsStore((state) => state.referenceImagePriority);
+export const usePromptMode = () => useSettingsStore((state) => state.promptMode);
+export const useImageResolution = () => useSettingsStore((state) => state.imageResolution);
+export const useUseModelSheets = () => useSettingsStore((state) => state.useModelSheets);
+export const useQaAutoReroll = () => useSettingsStore((state) => state.qaAutoReroll);
+export const useMaxConcurrentPages = () => useSettingsStore((state) => state.maxConcurrentPages);

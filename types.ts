@@ -253,6 +253,24 @@ export interface Persona {
   firstAppearancePage?: number;
   /** All pages where this character appears */
   appearancePages?: number[];
+
+  // === Model Sheet (canonical reference) ===
+  /**
+   * Generated character model sheet (base64): a turnaround with several angles
+   * and expressions, rendered in the target art style.
+   *
+   * When present this replaces `base64` as the reference sent to the image model.
+   * It exists because generating from a raw user photo forces the image model to
+   * solve style transfer, re-posing, and scene composition simultaneously on every
+   * page — and it re-solves style transfer independently each time, which is the
+   * dominant source of face drift across an issue. Solving it once, up front,
+   * turns every later page into the much easier "pose this known character".
+   */
+  modelSheet?: string;
+  /** Art style the model sheet was rendered in. Stale sheets are regenerated. */
+  modelSheetStyle?: string;
+  /** When the model sheet was generated. */
+  modelSheetAt?: number;
 }
 
 export interface StoryContext {
@@ -373,12 +391,43 @@ export interface NovelModeState {
     driftSummary?: string;
 }
 
+/**
+ * Structured art direction emitted by the writer model.
+ *
+ * Replaces prose-parsing of `Beat.scene`. The writer knows what it meant;
+ * making it say so directly removes an entire class of parsing bugs and
+ * lets the image prompt be assembled from clean fields.
+ */
+export interface ArtDirection {
+  /** Characters physically visible in this panel — role keys ('hero','friend') or exact names. */
+  characters_present: string[];
+  /** Main subject of the panel (character name, or an object for establishing shots). */
+  subject: string;
+  /** What is happening — verb phrase only, no location. e.g. "raises her blade overhead" */
+  action: string;
+  /** Where it happens — setting only, no action. e.g. "flooded cathedral ruins, ankle-deep water" */
+  environment: string;
+  /** Camera framing. e.g. "low angle, medium shot" */
+  camera?: string;
+  /** Light source and quality. e.g. "hard rim light from a broken stained-glass window" */
+  lighting?: string;
+  /** Emotional register. e.g. "defiant" */
+  mood?: string;
+  /** Explicit tie to the previous panel, for visual continuity. */
+  continuity?: string;
+}
+
 export interface Beat {
   caption?: string;
   dialogue?: string;
   scene: string;
   choices: string[];
   focus_char: 'hero' | 'friend' | 'other' | string;
+  /**
+   * Structured art direction. Preferred over parsing `scene`.
+   * Optional so beats restored from older drafts still load.
+   */
+  art?: ArtDirection;
 }
 
 export interface CharacterProfile {
@@ -585,6 +634,114 @@ export function generateHardNegatives(
   }
 
   return negatives;
+}
+
+/**
+ * The single canonical description of a character, for the v2 prompt assembler.
+ *
+ * Design rule: every visual fact about a character is stated EXACTLY ONCE, here.
+ * The legacy assembler restated the same face/hair/skin values in 8-14 separate
+ * blocks per request, each phrased slightly differently — which spends the image
+ * model's limited instruction budget reconciling near-duplicates instead of
+ * rendering the scene, and lets paraphrase drift introduce contradictions.
+ *
+ * Keep this compact (target <= 80 words). If you are tempted to add a second
+ * place that repeats one of these fields, change this function instead.
+ */
+export function formatCanonicalCharacter(
+  profile: CharacterProfile,
+  roleLabel?: string,
+): string {
+  const ih = profile.identityHeader;
+  const lines: string[] = [];
+
+  const header = roleLabel
+    ? `${profile.name.toUpperCase()} — ${roleLabel}`
+    : profile.name.toUpperCase();
+  lines.push(header);
+
+  if (ih) {
+    lines.push(`Face: ${ih.face}`);
+    const traits = [
+      ih.eyes && `eyes ${ih.eyes}`,
+      ih.hair && `hair ${ih.hair}`,
+      ih.skin && `skin ${ih.skin}`,
+      ih.build && `build ${ih.build}`,
+    ].filter(Boolean);
+    if (traits.length) lines.push(traits.join(' | '));
+  } else {
+    const face = ensureString(profile.faceDescription);
+    if (face) lines.push(`Face: ${face}`);
+    const hair = profile.hairDetails
+      ? `hair ${[profile.hairDetails.length, profile.hairDetails.color, profile.hairDetails.type, profile.hairDetails.style].filter(Boolean).join(' ')}`
+      : '';
+    const traits = [hair, profile.bodyType && `build ${ensureString(profile.bodyType)}`].filter(Boolean);
+    if (traits.length) lines.push(traits.join(' | '));
+  }
+
+  const clothing = ensureString(profile.clothing);
+  if (clothing) lines.push(`Wears: ${clothing}`);
+
+  if (profile.maskDescription) {
+    lines.push(`Mask (always worn): ${profile.maskDescription}`);
+  }
+
+  if (profile.emblemDescription) {
+    const placement = profile.emblemPlacement
+      ? `, on ${profile.emblemPlacement.replace(/-/g, ' ')}`
+      : '';
+    lines.push(`Emblem: ${profile.emblemDescription}${placement}`);
+  }
+
+  if (profile.weaponDescription) {
+    lines.push(`Carries: ${profile.weaponDescription}`);
+  }
+
+  // Signature elements the legacy path spread across two separate blocks.
+  const signature = ih?.signature?.length
+    ? ih.signature.slice(0, 3)
+    : ensureString(profile.distinguishingFeatures).split(',').map(x => x.trim()).filter(Boolean).slice(0, 3);
+  if (signature.length) lines.push(`Always visible: ${signature.join(', ')}`);
+
+  if (profile.hardNegatives?.length) {
+    lines.push(`Never: ${profile.hardNegatives.slice(0, 6).join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Compact one-line variant used when many characters share a page and the full
+ * block for each would crowd out the scene description.
+ */
+export function formatCanonicalCharacterBrief(profile: CharacterProfile): string {
+  const ih = profile.identityHeader;
+  const bits = ih
+    ? [ih.face, ih.hair, ih.skin].filter(Boolean)
+    : [ensureString(profile.faceDescription), ensureString(profile.colorPalette)].filter(Boolean);
+  const never = profile.hardNegatives?.length ? ` | never: ${profile.hardNegatives.slice(0, 2).join(', ')}` : '';
+  return `${profile.name.toUpperCase()}: ${bits.join(', ')}${never}`;
+}
+
+/**
+ * Render structured art direction into the SCENE section of an image prompt.
+ *
+ * Replaces the old approach of regex-splitting the writer's prose scene on
+ * prepositions, which mis-parsed any sentence containing more than one
+ * preposition ("stands in the rain, thinking in silence") and silently
+ * collapsed action to the literal string "poses" when the scene began with
+ * a location clause.
+ */
+export function formatArtDirection(art: ArtDirection): string {
+  const lines: string[] = [];
+  lines.push(`SUBJECT: ${art.subject}`);
+  lines.push(`ACTION: ${art.action}`);
+  lines.push(`SETTING: ${art.environment}`);
+  if (art.camera) lines.push(`CAMERA: ${art.camera}`);
+  if (art.lighting) lines.push(`LIGHTING: ${art.lighting}`);
+  if (art.mood) lines.push(`MOOD: ${art.mood}`);
+  if (art.continuity) lines.push(`CONTINUITY: ${art.continuity}`);
+  return lines.join('\n');
 }
 
 /**
