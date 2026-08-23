@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Persona, StoryContext, ART_STYLES, GENRES } from './types';
+import { ModelSheetStrip, type ModelSheetState } from './components/ModelSheetStrip';
 import { ComicPreset } from './data/comicPresets';
 import {
     Tooltip,
@@ -84,6 +85,19 @@ interface SetupProps {
     hasStaleSavedProfiles?: boolean;
     onPresetSelect?: (preset: ComicPreset) => void;
     onSettingsOpen?: () => void;
+    /**
+     * Casting step. Lives on the setup screen rather than mid-launch because a
+     * model sheet is something you decide about while configuring the cast —
+     * and because the launch flow can skip the profiles dialog entirely.
+     */
+    modelSheetProps?: {
+        characters: Persona[];
+        artStyle: string;
+        states: Record<string, ModelSheetState>;
+        onGenerate: (personaId: string) => void;
+        onClear: (personaId: string) => void;
+        onGenerateAll: () => void;
+    };
 }
 
 // LocalStorage key for custom presets
@@ -517,6 +531,12 @@ export const Setup: React.FC<SetupProps> = (props) => {
                                 />
                             ))}
                         </div>
+
+                        {props.modelSheetProps && props.modelSheetProps.characters.length > 0 && (
+                            <div className="mt-3">
+                                <ModelSheetStrip {...props.modelSheetProps} />
+                            </div>
+                        )}
                     </div>
 
                     {/* Right Column: Settings */}
@@ -652,14 +672,16 @@ export const Setup: React.FC<SetupProps> = (props) => {
                             {/* Story Description with AI Improve */}
                             <div className="mb-2 sm:mb-3">
                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 mb-1">
-                                    <p className="font-comic text-sm sm:text-base font-bold text-gray-800 uppercase flex items-center">
-                                        Describe Your Story{props.selectedGenre === 'Custom' && <span className="text-red-600 ml-0.5">*</span>}
+                                    <div className="font-comic text-sm sm:text-base font-bold text-gray-800 uppercase flex items-center">
+                                        <label htmlFor="story-description-input">
+                                            Describe Your Story{props.selectedGenre === 'Custom' && <span className="text-red-600 ml-0.5">*</span>}
+                                        </label>
                                         <HelpTooltip
                                             title="Story Tips"
                                             text="Include plot points, character motivations, key scenes, and conflicts. The more detail you provide, the better the AI can create a cohesive story."
                                             position="right"
                                         />
-                                    </p>
+                                    </div>
                                     <div className="flex gap-1 self-end sm:self-auto items-center">
                                         {props.onImproveText && (storyDescHistory.canUndo || storyDescHistory.canRedo) && (
                                             <UndoRedoButtons
@@ -733,6 +755,7 @@ export const Setup: React.FC<SetupProps> = (props) => {
                                     </div>
                                 </div>
                                 <textarea
+                                    id="story-description-input"
                                     value={props.storyContext.descriptionText}
                                     onChange={(e) => props.onStoryContextUpdate({ descriptionText: e.target.value })}
                                     onBlur={() => handleFieldBlur('storyDescription')}

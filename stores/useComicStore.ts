@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { ComicFace, PageCharacterPlan, VisualDriftWarning } from '../types';
+import type { QAVerdict } from '../hooks/useVisualQA';
 
 // ============================================================================
 // TYPES
@@ -66,6 +67,12 @@ export interface ComicState {
    * Session-only, cleared on reset.
    */
   visualDriftWarnings: VisualDriftWarning[];
+  /**
+   * Latest visual-QA verdict per page index.
+   * Lets the reader flag pages whose characters drifted, so the user can spot
+   * a bad face without scrubbing the whole issue. Session-only.
+   */
+  pageQA: Record<number, QAVerdict>;
 
   // === Actions ===
   /** Replace all comic faces */
@@ -107,6 +114,11 @@ export interface ComicState {
   /** Clear all drift warnings */
   clearDriftWarnings: () => void;
 
+  /** Record the visual-QA verdict for a page */
+  setPageQA: (pageIndex: number, verdict: QAVerdict) => void;
+  /** Clear all stored QA verdicts */
+  clearPageQA: () => void;
+
   /** Reset all comic state to initial values */
   resetComic: () => void;
 }
@@ -138,6 +150,7 @@ const initialState = {
   currentPageIndex: 0,
   generationState: initialGenerationState,
   visualDriftWarnings: [] as VisualDriftWarning[],
+  pageQA: {} as Record<number, QAVerdict>,
 };
 
 // ============================================================================
@@ -245,6 +258,17 @@ export const useComicStore = create<ComicState>()(
     updateGenerationState: (newState) =>
       set((state) => {
         state.generationState = { ...state.generationState, ...newState };
+      }),
+
+    // === Visual QA Actions ===
+    setPageQA: (pageIndex, verdict) =>
+      set((state) => {
+        state.pageQA[pageIndex] = verdict;
+      }),
+
+    clearPageQA: () =>
+      set((state) => {
+        state.pageQA = {};
       }),
 
     // === Visual Drift Warning Actions (Feature G) ===

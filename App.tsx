@@ -43,6 +43,15 @@ import { useGenerateBeat } from './hooks/useGenerateBeat';
 import { useGenerateImage, ComicOverrides } from './hooks/useGenerateImage';
 import { useGenerateProfile } from './hooks/useGenerateProfile';
 import { useGenerateOutline } from './hooks/useGenerateOutline';
+import { useGenerateModelSheet, hasValidModelSheet } from './hooks/useGenerateModelSheet';
+import { useVisualQA, type QACharacterInput } from './hooks/useVisualQA';
+import { retryWithBackoff } from './utils/retryWithBackoff';
+import { convertToCmykSafe, analyzeGamut } from './utils/cmykExport';
+import { generationAnnouncement } from './utils/comicAccessibility';
+import { GenerationConfirmDialog, type GenerationPlan } from './components/GenerationConfirmDialog';
+import type { ModelSheetState } from './components/ModelSheetStrip';
+import { ScriptReader } from './components/ScriptReader';
+import { createImageQueue } from './utils/requestQueue';
 import { useExportImport } from './hooks/useExportImport';
 import { buildAllCharacterReferences } from './utils/buildCharacterReference';
 
@@ -247,6 +256,75 @@ const App: React.FC = () => {
     useCharacterStore.getState().addCharacter(newChar);
   };
 
+  /**
+   * Apply a partial update to any character by id.
+   * The store splits hero/friend from additionalCharacters, so this routes to
+   * the right setter instead of silently dropping updates to the leads.
+   */
+  const updateAnyCharacter = (id: string, updates: Partial<Persona>) => {
+      const store = useCharacterStore.getState();
+      if (store.hero?.id === id) store.updateHero(updates);
+      else if (store.friend?.id === id) store.updateFriend(updates);
+      else store.updateCharacter(id, updates);
+  };
+
+  /** Generate (or reroll) one character's model sheet. */
+  const handleGenerateModelSheet = async (personaId: string) => {
+      const store = useCharacterStore.getState();
+      const persona = [store.hero, store.friend, ...store.additionalCharacters]
+          .find(p => p?.id === personaId);
+      if (!persona) return;
+
+      setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: true } }));
+      try {
+          const result = await generateModelSheet({
+              persona,
+              artStyle: storyContext.artStyle,
+              profile: store.characterProfiles.get(personaId),
+          });
+          if (result.imageUrl) {
+              updateAnyCharacter(personaId, {
+                  modelSheet: result.imageUrl,
+                  modelSheetStyle: storyContext.artStyle,
+                  modelSheetAt: Date.now(),
+              });
+              setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: false } }));
+          } else {
+              setModelSheetStates(prev => ({
+                  ...prev,
+                  [personaId]: { isGenerating: false, error: result.failureReason ?? 'failed' },
+              }));
+          }
+      } catch (e) {
+          console.error('[modelSheet] generation failed', e);
+          setModelSheetStates(prev => ({
+              ...prev, [personaId]: { isGenerating: false, error: 'failed' },
+          }));
+      }
+  };
+
+  /** Drop a model sheet so pages fall back to the raw portrait. */
+  const handleClearModelSheet = (personaId: string) => {
+      updateAnyCharacter(personaId, {
+          modelSheet: undefined, modelSheetStyle: undefined, modelSheetAt: undefined,
+      });
+      setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: false } }));
+  };
+
+  /**
+   * Generate sheets for every character still missing a current one.
+   * Sequential on purpose — this is the casting step, and a burst of image calls
+   * is exactly the pattern that trips rate limits.
+   */
+  const handleGenerateAllModelSheets = async () => {
+      const store = useCharacterStore.getState();
+      const cast = [store.hero, store.friend, ...store.additionalCharacters].filter(Boolean) as Persona[];
+      for (const p of cast) {
+          if (p.modelSheet && p.modelSheetStyle === storyContext.artStyle) continue;
+          await handleGenerateModelSheet(p.id);
+      }
+  };
+
   const handleUpdateCharacter = (id: string, updates: Partial<Persona>) => {
     // Phase 5.2 — Mark profile stale when portrait changes for additional characters
     if (updates.base64) {
@@ -278,6 +356,21 @@ const App: React.FC = () => {
 
   // Phase 4.2 — Outline Mode generation progress (null = not generating)
   const [generationProgress, setGenerationProgress] = useState<{ current: number; total: number } | null>(null);
+  /** Pending run awaiting the user's cost/time confirmation. */
+  const [pendingPlan, setPendingPlan] = useState<GenerationPlan | null>(null);
+  /** Per-character model sheet generation state, keyed by persona id. */
+  const [modelSheetStates, setModelSheetStates] = useState<Record<string, ModelSheetState>>({});
+  /** Reading mode: the comic rendered as text. */
+  const [showScriptReader, setShowScriptReader] = useState(false);
+  /** Casting-step props, shared by the setup screen and the profiles dialog. */
+  const modelSheetProps = {
+      characters: [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[],
+      artStyle: storyContext.artStyle,
+      states: modelSheetStates,
+      onGenerate: handleGenerateModelSheet,
+      onClear: handleClearModelSheet,
+      onGenerateAll: handleGenerateAllModelSheets,
+  };
 
   // --- Sync comicFaces to Zustand store ---
   useEffect(() => {
@@ -475,28 +568,33 @@ const App: React.FC = () => {
 
     try {
       if (claude) {
-        // Use Claude
-        const response = await claude.messages.create({
-          model: MODEL_TEXT_NAME_CLAUDE,
-          max_tokens: 1024,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }]
-        });
-        return getTextFromClaudeResponse(response.content).trim();
-      } else {
-        // Fallback to Gemini
-        const ai = getAI();
-        const model = ai.models.generateContent({
-          model: MODEL_TEXT_NAME,
-          contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }]
-        });
-        const result = await model;
-        return result.text?.trim() || text;
+        try {
+          // Use Claude
+          const response = await claude.messages.create({
+            model: MODEL_TEXT_NAME_CLAUDE,
+            max_tokens: 1024,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }]
+          });
+          return getTextFromClaudeResponse(response.content).trim();
+        } catch (claudeError) {
+          console.warn('Claude text improvement failed, falling back to Gemini:', claudeError);
+          handleAnthropicError(claudeError);
+          // Fall through to Gemini fallback below
+        }
       }
+
+      // Fallback to Gemini
+      const ai = getAI();
+      const model = ai.models.generateContent({
+        model: MODEL_TEXT_NAME,
+        contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }]
+      });
+      const result = await model;
+      return result.text?.trim() || text;
     } catch (e) {
-      console.error('AI text improvement failed:', e);
-      if (claude) handleAnthropicError(e);
-      else handleAPIError(e);
+      console.error('AI text improvement failed (Gemini fallback also failed):', e);
+      handleAPIError(e);
       throw new Error('Failed to improve text with AI. Please try again.');
     }
   };
@@ -557,6 +655,18 @@ const App: React.FC = () => {
   const { generateImage: hookGenerateImage } = useGenerateImage(hookConfig);
   const { generateCharacterProfile: hookGenerateProfile } = useGenerateProfile(hookConfig);
   const { generateOutline: hookGenerateOutline } = useGenerateOutline(hookConfig);
+  const { generateModelSheet } = useGenerateModelSheet(hookConfig);
+  const { scorePanel } = useVisualQA(hookConfig);
+
+  /**
+   * Shared queue for page generation.
+   *
+   * Page generation previously ran as a bare sequential `for...await` loop with
+   * no retry and no rate limiting, while a fully-built queue and backoff helper
+   * sat unimported in utils/. This wires them up: concurrency comes from
+   * settings, and the queue's per-minute cap keeps bursts from tripping 429s.
+   */
+  const pageQueueRef = useRef(createImageQueue());
 
   // =========================================================================
   // ADAPTER FUNCTIONS (maintain existing call signatures)
@@ -740,6 +850,40 @@ const App: React.FC = () => {
       if (idx !== -1) historyRef.current[idx] = { ...historyRef.current[idx], ...updates };
   };
 
+  /**
+   * Score a rendered panel against its cast's canonical references.
+   * Returns null when QA cannot run (no cast, no references) — never throws,
+   * because a QA failure must not take down page generation.
+   */
+  const runPanelQA = async (imageUrl: string, pageNum: number) => {
+      try {
+          const artStyle = storyContext.artStyle;
+          const profiles = useCharacterStore.getState().getProfilesArray();
+          const roster = [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[];
+
+          const qaChars: QACharacterInput[] = roster.flatMap(p => {
+              // Judge against the same reference the artist was given.
+              const reference = hasValidModelSheet(p, artStyle) ? p.modelSheet! : p.base64;
+              if (!reference) return [];
+              const profile = profiles.find(pr => pr.id === p.id || pr.name === p.name);
+              return [{
+                  name: p.name || 'Character',
+                  referenceImage: reference,
+                  hardNegatives: profile?.hardNegatives,
+                  emblem: profile?.emblemDescription,
+              }];
+          });
+
+          if (qaChars.length === 0) return null;
+          const verdict = await scorePanel({ panelImage: imageUrl, characters: qaChars });
+          useComicStore.getState().setPageQA(pageNum, verdict);
+          return verdict;
+      } catch (e) {
+          console.warn('[QA] scoring failed; treating page as passing', e);
+          return null;
+      }
+  };
+
   const generateSinglePage = async (faceId: string, pageNum: number, type: ComicFace['type'], instruction?: string, extraRefImages?: string[], previousChoices?: string[], comicOverrides?: ComicOverrides, useOnlySelectedRefs?: boolean, currentImageToPreserve?: string, adjacentPageImages?: Array<{ base64: string; label: string }>, consistencyMode?: boolean, profileOverrides?: CharacterProfile[], preserveCharacterIds?: string[]) => {
       // Use ref (not state) — this async function can be called from generateBatch or handleChoice
       // where the React state closure may be stale from the render that created the caller.
@@ -806,6 +950,32 @@ const App: React.FC = () => {
           updateFaceState(faceId, { isLoading: false, hasFailed: true, originalPrompt: result.originalPrompt, failureReason: result.failureReason });
       } else {
           updateFaceState(faceId, { imageUrl: result.imageUrl, isLoading: false, hasFailed: false, originalPrompt: result.originalPrompt, failureReason: undefined });
+
+          // Visual QA: score the render against the character references and reroll
+          // once with a targeted correction if it drifted. Opt-in — costs one extra
+          // vision call per page — and deliberately capped at a single retry so a
+          // persistently-failing page cannot spend the user's quota in a loop.
+          const { qaAutoReroll, qaThreshold } = useSettingsStore.getState();
+          if (qaAutoReroll && type !== 'back_cover' && result.imageUrl && !isStoppedRef.current) {
+              const verdict = await runPanelQA(result.imageUrl, pageNum);
+              if (verdict && verdict.overall < qaThreshold && verdict.correction) {
+                  console.warn(`[QA] Page ${pageNum} scored ${verdict.overall}/10 — rerolling. ${verdict.summary}`);
+                  updateFaceState(faceId, { isLoading: true });
+                  const retry = await generateImage(
+                      beat, type, verdict.correction, extraRefImages, prevImage, prevBeat, pageNum,
+                      comicOverrides, useOnlySelectedRefs, currentImageToPreserve, adjacentPageImages,
+                      true, profileOverrides, preserveCharacterIds,
+                  );
+                  if (retry.imageUrl && !isStoppedRef.current) {
+                      updateFaceState(faceId, {
+                          imageUrl: retry.imageUrl, isLoading: false, hasFailed: false,
+                          originalPrompt: retry.originalPrompt, failureReason: undefined,
+                      });
+                  } else {
+                      updateFaceState(faceId, { isLoading: false });
+                  }
+              }
+          }
 
           // Feature G: Fire-and-forget visual drift check for story pages (not cover/back_cover).
           // Uses canvas pixel sampling — no AI call, non-blocking.
@@ -946,15 +1116,46 @@ const App: React.FC = () => {
       }
 
       try {
-          for (const pageNum of pagesToGen) {
-               if (isStoppedRef.current) break;
-               await generateSinglePage(`page-${pageNum}`, pageNum, pageNum === config.BACK_COVER_PAGE ? 'back_cover' : 'story');
-               generatingPages.current.delete(pageNum);
-               // Phase 4.2 — Update progress after each page completes
-               if (generateFromOutlineRef.current && !isNovelMode) {
-                   const completedSoFar = historyRef.current.filter(f => f.imageUrl && !f.isLoading).length;
-                   setGenerationProgress({ current: completedSoFar, total: config.TOTAL_PAGES });
-               }
+          const { maxConcurrentPages = 1 } = useSettingsStore.getState();
+          const queue = pageQueueRef.current;
+          queue.updateOptions({ maxConcurrent: maxConcurrentPages });
+
+          const runPage = async (pageNum: number) => {
+              if (isStoppedRef.current) return;
+              try {
+                  // Transient 429s and 5xxs previously killed a page outright; the
+                  // backoff helper existed in utils/ but was never imported.
+                  await retryWithBackoff(
+                      () => generateSinglePage(`page-${pageNum}`, pageNum, pageNum === config.BACK_COVER_PAGE ? 'back_cover' : 'story'),
+                      {
+                          maxAttempts: 3,
+                          onRetry: (attempt, _err, delayMs) =>
+                              console.warn(`[batch] Page ${pageNum} attempt ${attempt} failed, retrying in ${delayMs}ms`),
+                      },
+                  );
+              } finally {
+                  generatingPages.current.delete(pageNum);
+              }
+              if (generateFromOutlineRef.current && !isNovelMode) {
+                  const completedSoFar = historyRef.current.filter(f => f.imageUrl && !f.isLoading).length;
+                  setGenerationProgress({ current: completedSoFar, total: config.TOTAL_PAGES });
+              }
+          };
+
+          if (maxConcurrentPages <= 1) {
+              // Sequential: preserves each page's view of the previous page's art.
+              for (const pageNum of pagesToGen) {
+                  if (isStoppedRef.current) break;
+                  await runPage(pageNum);
+              }
+          } else {
+              // Concurrent: the queue caps in-flight requests and throttles per minute.
+              await Promise.all(
+                  pagesToGen.map(pageNum =>
+                      queue.submit(() => runPage(pageNum), { id: `page-${pageNum}`, priority: 'normal' })
+                          .catch(e => console.error(`[batch] Page ${pageNum} failed`, e)),
+                  ),
+              );
           }
       } catch (e) {
           console.error("Batch generation error", e);
@@ -1046,7 +1247,32 @@ const App: React.FC = () => {
       setStoryOutline({ content: "", isReady: false, isGenerating: false });
     }
     setShowModeSelection(false);
+
+    // Show what this run will cost before spending the user's quota on it.
+    const cast = [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[];
+    const { qaAutoReroll, useModelSheets } = useSettingsStore.getState();
+    setPendingPlan({
+      pageCount: storyContext.pageLength,
+      characterCount: cast.length,
+      isOutlineMode: isOutline,
+      missingModelSheets: useModelSheets
+        ? cast.filter(p => !hasValidModelSheet(p, storyContext.artStyle)).map(p => p.name || 'Unnamed')
+        : [],
+      qaEnabled: qaAutoReroll,
+      artStyle: storyContext.artStyle,
+    });
+  };
+
+  /** User confirmed the cost estimate — start the run. */
+  const handleConfirmGeneration = () => {
+    setPendingPlan(null);
     launchStory();
+  };
+
+  /** User backed out — return them to mode selection rather than the setup form. */
+  const handleCancelGeneration = () => {
+    setPendingPlan(null);
+    setShowModeSelection(true);
   };
 
   const handleModeSelectionBack = () => {
@@ -1856,31 +2082,6 @@ Create a powerful, memorable conclusion that honors the user's story path.
       });
   };
 
-  // Apply CMYK-like color adjustment (approximation for browser)
-  const applyCmykAdjustment = (imageData: ImageData): ImageData => {
-    const data = imageData.data;
-    for (let i = 0; i < data.length; i += 4) {
-      // Reduce saturation slightly and adjust for print appearance
-      // This is an approximation - true CMYK requires professional software
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-
-      // Convert to grayscale component
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-
-      // Blend towards desaturated by ~10% and reduce overall brightness by ~5%
-      // This simulates the "duller" look of print vs screen
-      const saturationFactor = 0.9;
-      const brightnessFactor = 0.95;
-
-      data[i] = Math.round((r * saturationFactor + gray * (1 - saturationFactor)) * brightnessFactor);
-      data[i + 1] = Math.round((g * saturationFactor + gray * (1 - saturationFactor)) * brightnessFactor);
-      data[i + 2] = Math.round((b * saturationFactor + gray * (1 - saturationFactor)) * brightnessFactor);
-    }
-    return imageData;
-  };
-
   // Process image with optional CMYK adjustment
   const processImageForPrint = async (imageUrl: string, cmykMode: boolean): Promise<string> => {
     if (!cmykMode) return imageUrl;
@@ -1898,10 +2099,15 @@ Create a powerful, memorable conclusion that honors the user's story path.
           return;
         }
         ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const adjustedData = applyCmykAdjustment(imageData);
-        ctx.putImageData(adjustedData, 0, 0);
-        resolve(canvas.toDataURL('image/jpeg', 0.95));
+        // Real gamut-aware conversion: colours outside the CMYK gamut are
+        // clamped rather than the whole image being uniformly desaturated,
+        // so in-gamut artwork keeps its punch.
+        const printCanvas = convertToCmykSafe(canvas);
+        const gamut = analyzeGamut(canvas);
+        if (gamut.outOfGamutPercentage > 20) {
+          console.warn(`[print] ${gamut.outOfGamutPercentage.toFixed(1)}% of pixels fall outside the CMYK gamut; printed colours will differ from screen.`);
+        }
+        resolve(printCanvas.toDataURL('image/jpeg', 0.95));
       };
       img.onerror = () => resolve(imageUrl);
       img.src = imageUrl;
@@ -2352,14 +2558,20 @@ Create a powerful, memorable conclusion that honors the user's story path.
       let responseText = '';
 
       if (claude) {
-        const response = await claude.messages.create({
-          model: MODEL_TEXT_NAME_CLAUDE,
-          max_tokens: 512,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }]
-        });
-        responseText = getTextFromClaudeResponse(response.content).trim();
-      } else {
+        try {
+          const response = await claude.messages.create({
+            model: MODEL_TEXT_NAME_CLAUDE,
+            max_tokens: 512,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }]
+          });
+          responseText = getTextFromClaudeResponse(response.content).trim();
+        } catch (claudeError) {
+          console.warn('Claude concept generation failed, falling back to Gemini:', claudeError);
+        }
+      }
+
+      if (!responseText) {
         const ai = getAI();
         const result = await ai.models.generateContent({
           model: MODEL_TEXT_NAME,
@@ -2524,35 +2736,45 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
     const userPrompt = userLines.join('\n');
 
     const claude = getClaude();
+    let responseText = '';
 
     try {
-      if (claude && hasImages) {
-        // Claude with vision — analyze ref images
-        const imageBlocks = refImages.map(base64 => ({
-          type: 'image' as const,
-          source: {
-            type: 'base64' as const,
-            media_type: detectImageMimeType(base64) as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
-            data: base64,
+      if (claude) {
+        try {
+          if (hasImages) {
+            // Claude with vision — analyze ref images
+            const imageBlocks = refImages.map(base64 => ({
+              type: 'image' as const,
+              source: {
+                type: 'base64' as const,
+                media_type: detectImageMimeType(base64) as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+                data: base64,
+              }
+            }));
+            const response = await claude.messages.create({
+              model: MODEL_TEXT_NAME_CLAUDE,
+              max_tokens: 512,
+              system: systemPrompt,
+              messages: [{ role: 'user', content: [...imageBlocks, { type: 'text' as const, text: userPrompt }] }]
+            });
+            responseText = getTextFromClaudeResponse(response.content).trim();
+          } else {
+            // Claude text-only
+            const response = await claude.messages.create({
+              model: MODEL_TEXT_NAME_CLAUDE,
+              max_tokens: 512,
+              system: systemPrompt,
+              messages: [{ role: 'user', content: userPrompt }]
+            });
+            responseText = getTextFromClaudeResponse(response.content).trim();
           }
-        }));
-        const response = await claude.messages.create({
-          model: MODEL_TEXT_NAME_CLAUDE,
-          max_tokens: 512,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: [...imageBlocks, { type: 'text' as const, text: userPrompt }] }]
-        });
-        return getTextFromClaudeResponse(response.content).trim();
-      } else if (claude) {
-        // Claude text-only
-        const response = await claude.messages.create({
-          model: MODEL_TEXT_NAME_CLAUDE,
-          max_tokens: 512,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }]
-        });
-        return getTextFromClaudeResponse(response.content).trim();
-      } else {
+        } catch (claudeError) {
+          console.warn('Claude single image expand failed, falling back to Gemini:', claudeError);
+          handleAnthropicError(claudeError);
+        }
+      }
+
+      if (!responseText) {
         // Gemini fallback — multimodal if images present
         const ai = getAI();
         if (hasImages) {
@@ -2565,15 +2787,16 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
             model: MODEL_TEXT_NAME,
             contents: [{ role: 'user', parts }]
           });
-          return res.text?.trim() || description;
+          responseText = res.text?.trim() || description;
         } else {
           const res = await ai.models.generateContent({
             model: MODEL_TEXT_NAME,
             contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }]
           });
-          return res.text?.trim() || description;
+          responseText = res.text?.trim() || description;
         }
       }
+      return responseText;
     } catch (e) {
       console.error('Single image AI expand failed:', e);
       throw new Error('AI expand failed. Please try again.');
@@ -2799,6 +3022,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           onImproveText={improveTextWithAI}
           skipProfileAnalysis={skipProfileAnalysis}
           onSkipProfileAnalysisChange={setSkipProfileAnalysis}
+          modelSheetProps={modelSheetProps}
           useSavedProfiles={useSavedProfiles}
           onUseSavedProfilesChange={setUseSavedProfiles}
           hasStaleSavedProfiles={hasStaleSavedProfiles}
@@ -2840,6 +3064,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
                   setTempProfiles(prev => prev.map((p, i) => i === index ? updated : p));
               }}
               onAnalyze={handleAnalyzeProfile}
+              modelSheetProps={modelSheetProps}
               onConfirm={continueAfterProfiles}
               onCancel={() => {
                   setShowProfilesStep(false);
@@ -2952,6 +3177,15 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
                       </div>
                   </div>
               )}
+              {/* Reading mode — text alternative for the artwork, and a handy proofing view. */}
+              <button
+                  onClick={() => setShowScriptReader(true)}
+                  className="comic-btn text-xs bg-white text-black px-3 py-1 font-comic tracking-widest border-[2px] border-black shadow-[2px_2px_0_rgba(0,0,0,1)] hover:bg-gray-100 self-end"
+                  title="Read the comic as text"
+              >
+                  READ AS TEXT
+              </button>
+
               {/* Toggle Page Nav Button */}
               <button 
                   onClick={() => setShowPageNav(!showPageNav)} 
@@ -3006,13 +3240,46 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
         </div>
       )}
 
+      {showScriptReader && (
+        <ScriptReader
+          faces={comicFaces}
+          cast={{ hero: getHero(), friend: getFriend(), others: getAdditionalChars() }}
+          title={storyContext.title}
+          onClose={() => setShowScriptReader(false)}
+        />
+      )}
+
+      {pendingPlan && (
+        <GenerationConfirmDialog
+          plan={pendingPlan}
+          onConfirm={handleConfirmGeneration}
+          onCancel={handleCancelGeneration}
+        />
+      )}
+
+      {/*
+        Screen-reader announcements for generation.
+        Generation runs for minutes with no visual change a screen reader can
+        report; without a live region the app simply goes silent.
+      */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {generationAnnouncement(generationProgress, isStarted && !showSetup)}
+      </div>
+
       {/* Phase 4.2 — Outline Mode Generation Progress Bar */}
       {generationProgress && isStarted && !showSetup && (
         <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[200] bg-white border-[3px] border-black shadow-[4px_4px_0px_rgba(0,0,0,1)] px-4 py-3 min-w-[280px] max-w-[400px] w-full sm:w-auto">
-          <p className="font-comic text-xs font-bold uppercase text-center mb-2 text-gray-700">
+          <p className="font-comic text-xs font-bold uppercase text-center mb-2 text-gray-700" aria-hidden="true">
             📄 Generating page {generationProgress.current} of {generationProgress.total}…
           </p>
-          <div className="w-full bg-gray-200 rounded-full h-2.5 border border-gray-300">
+          <div
+            className="w-full bg-gray-200 rounded-full h-2.5 border border-gray-300"
+            role="progressbar"
+            aria-valuenow={generationProgress.current}
+            aria-valuemin={0}
+            aria-valuemax={generationProgress.total}
+            aria-label={`Generating page ${generationProgress.current} of ${generationProgress.total}`}
+          >
             <div
               className="bg-yellow-400 h-2.5 rounded-full transition-all duration-500"
               style={{ width: `${Math.min(100, Math.round((generationProgress.current / generationProgress.total) * 100))}%` }}

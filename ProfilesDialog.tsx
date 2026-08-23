@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { CharacterProfile } from './types';
+import { CharacterProfile, Persona } from './types';
+import { ModelSheetStrip, type ModelSheetState } from './components/ModelSheetStrip';
 import { validateProfileCompleteness } from './utils/profileValidation';
 import { ProfileQualityIndicator } from './components/ProfileQualityIndicator';
 import { useCharacterStore } from './stores/useCharacterStore';
@@ -18,6 +19,18 @@ interface Props {
     onAnalyze?: (index: number) => Promise<void>;
     onConfirm: () => void;
     onCancel: () => void;
+    /**
+     * Optional casting step. When supplied, the dialog shows the model-sheet
+     * strip so the user can lock in each character's look before generating.
+     */
+    modelSheetProps?: {
+        characters: Persona[];
+        artStyle: string;
+        states: Record<string, ModelSheetState>;
+        onGenerate: (personaId: string) => void;
+        onClear: (personaId: string) => void;
+        onGenerateAll: () => void;
+    };
 }
 
 const getProfileScore = (profile: CharacterProfile): 'complete' | 'partial' | 'sparse' => {
@@ -37,7 +50,7 @@ const getProfileScore = (profile: CharacterProfile): 'complete' | 'partial' | 's
   return 'sparse';
 };
 
-export const ProfilesDialog: React.FC<Props> = ({ profiles, onUpdate, onAnalyze, onConfirm, onCancel }) => {
+export const ProfilesDialog: React.FC<Props> = ({ profiles, onUpdate, onAnalyze, onConfirm, onCancel, modelSheetProps }) => {
     const [analyzingIdx, setAnalyzingIdx] = useState<number | null>(null);
     const [bulkMatches, setBulkMatches] = useState<BulkMatch[] | null>(null);
     const [bulkError, setBulkError] = useState<string | null>(null);
@@ -222,6 +235,8 @@ export const ProfilesDialog: React.FC<Props> = ({ profiles, onUpdate, onAnalyze,
                         ⚠️ Some profiles may be outdated — re-analyze to refresh.
                     </div>
                 )}
+
+                {modelSheetProps && <ModelSheetStrip {...modelSheetProps} />}
 
                 <div className="overflow-y-auto flex-1 pr-2 space-y-6">
                     {profiles.map((p, idx) => {
