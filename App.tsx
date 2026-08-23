@@ -48,7 +48,7 @@ import { useVisualQA, type QACharacterInput } from './hooks/useVisualQA';
 import { retryWithBackoff } from './utils/retryWithBackoff';
 import { convertToCmykSafe, analyzeGamut } from './utils/cmykExport';
 import { downloadAsZip } from './utils/zipDownload';
-import { saveSnapshot, loadSnapshot, deleteSnapshot, pruneSnapshots } from './utils/sessionSnapshots';
+import { saveSnapshot, loadSnapshot, deleteSnapshot, pruneSnapshots, CAST_SNAPSHOT_KEY } from './utils/sessionSnapshots';
 import { generationAnnouncement } from './utils/comicAccessibility';
 import { GenerationConfirmDialog, type GenerationPlan } from './components/GenerationConfirmDialog';
 import type { ModelSheetState } from './components/ModelSheetStrip';
@@ -108,12 +108,30 @@ const App: React.FC = () => {
   const { validateApiKey, setShowApiKeyDialog, showApiKeyDialog, handleApiKeyDialogContinue } = useApiKey();
 
   const isCastLoadedRef = useRef(false);
+  /**
+   * True while the cast is being read back from IndexedDB.
+   *
+   * The read is async and a cast with portraits and model sheets runs to several
+   * megabytes, so there is a visible gap before the fields populate. Without an
+   * indicator the setup screen looks empty and users reasonably conclude their
+   * characters are gone.
+   */
+  const [isCastLoading, setIsCastLoading] = useState(true);
 
   useEffect(() => {
-    const saved = localStorage.getItem('infinite_heroes_cast');
-    if (saved) {
+    /*
+     * Load the cast from IndexedDB, falling back to the legacy localStorage
+     * copy. The fallback still matters: it holds whatever a previous version of
+     * the app saved, and it is the only option where IndexedDB is unavailable.
+     * Being async, this runs a tick later than the old synchronous read —
+     * isCastLoadedRef guards the save effect from firing on the empty state in
+     * between and wiping the stored cast.
+     */
+    let cancelled = false;
+
+    const applyCast = (parsed: { hero?: Persona; friend?: Persona; additionalCharacters?: Persona[] } | null) => {
+      if (cancelled || !parsed) return false;
       try {
-        const parsed = JSON.parse(saved);
         const store = useCharacterStore.getState();
         if (parsed.hero) store.setHero(parsed.hero);
         if (parsed.friend) store.setFriend(parsed.friend);
@@ -138,9 +156,37 @@ const App: React.FC = () => {
             console.log(`[CharacterStore] Rebuilt ${refs.length} character reference(s) from persisted profiles.`);
           }
         }
-      } catch(e){ console.error("Failed to load cast", e); }
-    }
-    isCastLoadedRef.current = true;
+        return true;
+      } catch (e) {
+        console.error('Failed to load cast', e);
+        return false;
+      }
+    };
+
+    (async () => {
+      const fromDb = await loadSnapshot(CAST_SNAPSHOT_KEY).catch(() => null);
+      let applied = false;
+      if (fromDb?.success && fromDb.data) {
+        applied = applyCast(fromDb.data as { hero?: Persona; friend?: Persona; additionalCharacters?: Persona[] });
+      }
+      if (!applied) {
+        const legacy = localStorage.getItem('infinite_heroes_cast');
+        if (legacy) {
+          try {
+            applied = applyCast(JSON.parse(legacy));
+            if (applied) console.log('[cast] loaded from legacy localStorage; will migrate to IndexedDB on next change');
+          } catch (e) {
+            console.error('Failed to parse legacy cast', e);
+          }
+        }
+      }
+      if (!cancelled) {
+        isCastLoadedRef.current = true;
+        setIsCastLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, []);
 
   // Zustand selector hooks — single source of truth for character data
@@ -208,44 +254,57 @@ const App: React.FC = () => {
   const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters;
   const getProfilesArray = () => useCharacterStore.getState().getProfilesArray();
 
+  /** Debounce handle for cast persistence. */
+  const castSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!isCastLoadedRef.current) return;
-    const payload = JSON.stringify({ hero, friend, additionalCharacters });
-    const payloadSize = new Blob([payload]).size;
 
-    // Check if approaching or exceeding limit
-    if (payloadSize > STORAGE_SAFE_LIMIT) {
-      // Must strip images
-      console.warn("Payload exceeds local storage safe limits. Stripping images to persist text metadata.");
-      const stripStr = (p: Persona|null) => p ? { ...p, base64: '', referenceImage: '', referenceImages: [], backstoryFiles: [] } : null;
-      const strippedPayload = JSON.stringify({
-        hero: stripStr(hero),
-        friend: stripStr(friend),
-        additionalCharacters: additionalCharacters.map(c => stripStr(c)).filter(Boolean) as Persona[]
-      });
+    /*
+     * The cast lives in IndexedDB, not localStorage.
+     *
+     * localStorage caps around 5MB. A cast carries portraits, reference images,
+     * emblems, weapons, and a multi-megabyte model sheet per character, so the
+     * old code hit the ceiling and responded by deleting the images to keep the
+     * text. A returning user then had characters with no reference art, and
+     * generation quietly fell back to text-only descriptions — which is exactly
+     * the condition that produces drift.
+     *
+     * A text-only copy still goes to localStorage as a fallback for browsers
+     * where IndexedDB is unavailable or blocked (private mode in some browsers).
+     */
+    if (castSaveTimerRef.current) clearTimeout(castSaveTimerRef.current);
+    castSaveTimerRef.current = setTimeout(() => {
+      saveSnapshot(CAST_SNAPSHOT_KEY, { hero, friend, additionalCharacters })
+        .then(r => {
+          if (r.success) {
+            setStorageWarning(null);
+            return;
+          }
+          console.warn('[cast] IndexedDB save failed, falling back to text-only localStorage:', r.error);
+          const stripStr = (p: Persona | null) => p ? {
+            ...p, base64: '', referenceImage: '', referenceImages: [], backstoryFiles: [],
+            emblemImage: undefined, weaponImage: undefined, modelSheet: undefined,
+          } : null;
+          const strippedPayload = JSON.stringify({
+            hero: stripStr(hero),
+            friend: stripStr(friend),
+            additionalCharacters: additionalCharacters.map(c => stripStr(c)).filter(Boolean) as Persona[],
+          });
+          try {
+            localStorage.setItem('infinite_heroes_cast', strippedPayload);
+            setStorageWarning(checkStorageUsage(JSON.stringify({ hero, friend, additionalCharacters }), true));
+            setDismissedStorageWarning(false);
+          } catch (err) {
+            console.error('[cast] even text metadata failed to save:', err);
+          }
+        })
+        .catch(e => console.warn('[cast] save threw:', e));
+    }, 1500);
 
-      try {
-        localStorage.setItem('infinite_heroes_cast', strippedPayload);
-        // Show warning that images were stripped
-        setStorageWarning(checkStorageUsage(payload, true));
-        setDismissedStorageWarning(false); // Reset dismissal on new stripping event
-      } catch (err) {
-        console.error("Even text metadata failed to save:", err);
-      }
-    } else {
-      try {
-        localStorage.setItem('infinite_heroes_cast', payload);
-        // Check if approaching limit (warn at 75%+)
-        if (payloadSize > STORAGE_WARNING_THRESHOLD) {
-          setStorageWarning(checkStorageUsage(payload, false));
-        } else {
-          // Clear warning if under threshold
-          setStorageWarning(null);
-        }
-      } catch (e) {
-        console.error("Storage save failed:", e);
-      }
-    }
+    return () => {
+      if (castSaveTimerRef.current) clearTimeout(castSaveTimerRef.current);
+    };
   }, [hero, friend, additionalCharacters]);
 
   // --- Character State Setters (Zustand is the single source of truth) ---
@@ -416,6 +475,11 @@ const App: React.FC = () => {
   const [modelSheetStates, setModelSheetStates] = useState<Record<string, ModelSheetState>>({});
   /** Reading mode: the comic rendered as text. */
   const [showScriptReader, setShowScriptReader] = useState(false);
+  /**
+   * Pages already rendered in a just-restored draft. Drives the "open the comic"
+   * affordance on the setup screen; zero means there is nothing to resume.
+   */
+  const [resumablePageCount, setResumablePageCount] = useState(0);
   /** Casting-step props, shared by the setup screen and the profiles dialog. */
   const modelSheetProps = {
       characters: [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[],
@@ -1378,6 +1442,8 @@ const App: React.FC = () => {
   /** User confirmed the cost estimate — start the run. */
   const handleConfirmGeneration = () => {
     setPendingPlan(null);
+    // A new run supersedes whatever was restored.
+    setResumablePageCount(0);
     launchStory();
   };
 
@@ -2595,14 +2661,30 @@ Create a powerful, memorable conclusion that honors the user's story path.
     // Always clear compiled references on import (rebuilt fresh from profiles)
     importStore.clearCharacterReferences();
 
-    const hasPages = Boolean(parsed.comicFaces?.some((f: ComicFace) => f.imageUrl));
-    if (hasPages) {
-        setIsStarted(true);
-        setShowSetup(false);
-        setIsTransitioning(false);
-        setCurrentSheetIndex(1);
-    }
-    return hasPages;
+    /**
+     * Land on the setup screen with every field populated, rather than jumping
+     * straight into the reader.
+     *
+     * Loading a draft is usually the start of more work — changing the cast,
+     * adjusting the art style, regenerating a bad page — and being dropped into
+     * a reader (often showing failed pages) hides the very fields the user came
+     * back to edit. When the draft does contain finished pages, Setup offers an
+     * explicit way in instead.
+     */
+    const readyPages = (parsed.comicFaces ?? []).filter((f: ComicFace) => f.imageUrl).length;
+    setIsStarted(readyPages > 0);
+    setShowSetup(true);
+    setIsTransitioning(false);
+    setCurrentSheetIndex(1);
+    setResumablePageCount(readyPages);
+    return readyPages > 0;
+  };
+
+  /** Open the reader for a draft that was just restored. */
+  const handleResumeComic = () => {
+    setShowSetup(false);
+    setIsTransitioning(false);
+    setIsStarted(true);
   };
 
   /**
@@ -3222,6 +3304,9 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           skipProfileAnalysis={skipProfileAnalysis}
           onSkipProfileAnalysisChange={setSkipProfileAnalysis}
           modelSheetProps={modelSheetProps}
+          isCastLoading={isCastLoading}
+          resumablePageCount={resumablePageCount}
+          onResumeComic={handleResumeComic}
           onRestoreSession={handleRestoreSession}
           onDeleteSessionSnapshot={handleDeleteSessionSnapshot}
           useSavedProfiles={useSavedProfiles}

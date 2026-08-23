@@ -32,6 +32,20 @@ const STORE_NAME = 'snapshots';
  */
 export type SessionSnapshot = Record<string, unknown>;
 
+/**
+ * Reserved key for the persisted cast.
+ *
+ * The cast used to live in localStorage, which caps at ~5MB. Portraits,
+ * reference images, emblems, weapons, and (since model sheets landed) a
+ * multi-megabyte turnaround per character do not fit, so the app fell back to
+ * deleting images to keep the text — meaning a returning user's characters had
+ * no reference art at all, and generation silently degraded to text-only
+ * descriptions. IndexedDB has no such ceiling.
+ *
+ * Excluded from pruning: it is not a session and has no session row.
+ */
+export const CAST_SNAPSHOT_KEY = '__cast__';
+
 export interface SnapshotResult<T = void> {
   success: boolean;
   data?: T;
@@ -165,7 +179,7 @@ export async function listSnapshotIds(): Promise<SnapshotResult<string[]>> {
   return withStore(
     'readonly',
     store => store.getAllKeys(),
-    raw => (raw as IDBValidKey[]).map(String),
+    raw => (raw as IDBValidKey[]).map(String).filter(id => id !== CAST_SNAPSHOT_KEY),
   );
 }
 
@@ -184,7 +198,8 @@ export async function pruneSnapshots(keepIds: string[]): Promise<SnapshotResult<
   if (!listed.success || !listed.data) return { success: false, error: listed.error };
 
   const keep = new Set(keepIds);
-  const orphans = listed.data.filter(id => !keep.has(id));
+  // The cast is not a session; pruning it would delete the user's characters.
+  const orphans = listed.data.filter(id => id !== CAST_SNAPSHOT_KEY && !keep.has(id));
 
   let removed = 0;
   for (const id of orphans) {

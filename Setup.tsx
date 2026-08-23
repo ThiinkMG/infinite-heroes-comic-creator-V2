@@ -90,6 +90,16 @@ interface SetupProps {
      * model sheet is something you decide about while configuring the cast —
      * and because the launch flow can skip the profiles dialog entirely.
      */
+    /** True while the saved cast is still being read from storage. */
+    isCastLoading?: boolean;
+    /**
+     * Pages already rendered in a just-restored draft. When above zero, Setup
+     * offers a way back into the reader — loading a draft populates these fields
+     * rather than jumping straight to the artwork.
+     */
+    resumablePageCount?: number;
+    /** Open the reader for the restored draft. */
+    onResumeComic?: () => void;
     /**
      * Reload a past session. Resolves to null on success, or a message
      * explaining why it could not be restored.
@@ -455,6 +465,35 @@ export const Setup: React.FC<SetupProps> = (props) => {
 
                 <h1 className="font-comic text-3xl sm:text-4xl md:text-5xl text-red-600 leading-none mb-1 tracking-wide inline-block mr-2 sm:mr-3" style={{textShadow: '2px 2px 0px black'}}>INFINITE</h1>
                 <h1 className="font-comic text-3xl sm:text-4xl md:text-5xl text-yellow-400 leading-none mb-3 sm:mb-4 tracking-wide inline-block" style={{textShadow: '2px 2px 0px black'}}>HEROES</h1>
+
+                {(props.resumablePageCount ?? 0) > 0 && props.onResumeComic && (
+                    <div className="border-[3px] border-black bg-green-100 p-3 mb-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
+                            <div>
+                                <p className="font-comic text-base uppercase text-green-900">
+                                    Draft loaded — {props.resumablePageCount} page{props.resumablePageCount === 1 ? '' : 's'} already drawn
+                                </p>
+                                <p className="font-ui text-xs text-gray-700">
+                                    Your cast and story settings are filled in below. Edit anything you like, or jump straight back to the artwork.
+                                </p>
+                            </div>
+                            <button
+                                onClick={props.onResumeComic}
+                                className="comic-btn shrink-0 bg-green-600 text-white font-comic px-4 py-2 border-[3px] border-black uppercase text-sm hover:bg-green-500"
+                            >
+                                Open Comic
+                            </button>
+                        </div>
+                    )}
+
+                {props.isCastLoading && (
+                    <div
+                        role="status"
+                        aria-live="polite"
+                        className="border-[3px] border-black bg-blue-100 p-2 mb-3 font-comic text-sm uppercase text-blue-900"
+                    >
+                        Restoring your saved cast…
+                    </div>
+                )}
 
                 <div className="flex flex-col md:flex-row gap-3 sm:gap-4 mb-3 sm:mb-4 text-left">
 
