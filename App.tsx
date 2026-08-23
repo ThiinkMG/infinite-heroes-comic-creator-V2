@@ -47,6 +47,7 @@ import { useGenerateModelSheet, hasValidModelSheet } from './hooks/useGenerateMo
 import { useVisualQA, type QACharacterInput } from './hooks/useVisualQA';
 import { retryWithBackoff } from './utils/retryWithBackoff';
 import { convertToCmykSafe, analyzeGamut } from './utils/cmykExport';
+import { downloadAsZip } from './utils/zipDownload';
 import { saveSnapshot, loadSnapshot, deleteSnapshot, pruneSnapshots } from './utils/sessionSnapshots';
 import { generationAnnouncement } from './utils/comicAccessibility';
 import { GenerationConfirmDialog, type GenerationPlan } from './components/GenerationConfirmDialog';
@@ -2316,6 +2317,7 @@ Create a powerful, memorable conclusion that honors the user's story path.
 
   const downloadImages = async (faces: ComicFace[], format: 'webp' | 'png' | 'jpeg') => {
     const pagesToPrint = faces.filter(face => face.imageUrl && !face.isLoading).sort((a, b) => (a.pageIndex || 0) - (b.pageIndex || 0));
+    const entries: Array<{ name: string; data: string }> = [];
     
     for (const face of pagesToPrint) {
       if (!face.imageUrl) continue;
@@ -2347,16 +2349,28 @@ Create a powerful, memorable conclusion that honors the user's story path.
         });
       }
 
+      const pName = face.type === 'cover' ? '00-Cover'
+        : face.type === 'back_cover' ? '99-BackCover'
+        : `Page-${String(face.pageIndex).padStart(2, '0')}`;
+      entries.push({
+        name: `${storyContext.title || 'Infinite-Heroes'}-${pName}.${format}`,
+        data: downloadUrl,
+      });
+    }
+
+    // One archive rather than one click per page. Every major browser throttles
+    // or silently drops a burst of programmatic downloads, so exporting an issue
+    // used to deliver an unpredictable subset of it.
+    if (entries.length === 1) {
       const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.download = `${storyContext.title || 'Infinite-Heroes'}-Page-${face.pageIndex}.${format}`;
+      link.href = entries[0].data;
+      link.download = entries[0].name;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
-      // Small delay to prevent browser from blocking multiple downloads
-      await new Promise(r => setTimeout(r, 200));
+      return;
     }
+    await downloadAsZip(entries, `${storyContext.title || 'Infinite-Heroes'}-${format}.zip`);
   };
 
   const handleExport = async (options: ExportOptions) => {

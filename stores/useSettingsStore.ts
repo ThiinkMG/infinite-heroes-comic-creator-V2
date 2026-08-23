@@ -64,6 +64,19 @@ export interface SettingsState {
    */
   promptMode: 'v2' | 'legacy';
   /**
+   * Send the previous page's rendered art as a background/lighting reference.
+   *
+   * Off by default. It compounds drift: once one page renders a character
+   * slightly wrong, every later page sees that art and copies it, so small
+   * errors accumulate across an issue rather than staying isolated. The
+   * instruction telling the model to ignore faces in these images is not
+   * reliably honoured — image models weight pixels above prose.
+   *
+   * Scene continuity is carried instead by `ArtDirection.continuity`, which is
+   * text and therefore cannot pull a character's appearance off-model.
+   */
+  sceneContinuityImages: boolean;
+  /**
    * Output resolution passed to the image model.
    * '1k' for drafts, '2k'/'4k' for print export (1k at 2:3 is only ~130 DPI at comic trim size).
    */
@@ -117,6 +130,7 @@ export interface SettingsActions {
   setAutoCharacterAnalysis: (value: boolean) => void;
   setReferenceImagePriority: (value: boolean) => void;
   setPromptMode: (value: 'v2' | 'legacy') => void;
+  setSceneContinuityImages: (value: boolean) => void;
   setImageResolution: (value: '1k' | '2k' | '4k') => void;
   setUseModelSheets: (value: boolean) => void;
   setQaAutoReroll: (value: boolean) => void;
@@ -155,6 +169,7 @@ const getDefaultSettings = (): SettingsState => ({
   autoCharacterAnalysis: true,
   referenceImagePriority: true,
   promptMode: 'v2',
+  sceneContinuityImages: false,
   imageResolution: '1k',
   useModelSheets: true,
   qaAutoReroll: false,   // opt-in: costs one extra vision call per page
@@ -206,6 +221,7 @@ export const useSettingsStore = create<SettingsStore>()(
 
       setReferenceImagePriority: (value) => set({ referenceImagePriority: value }),
       setPromptMode: (value) => set({ promptMode: value }),
+      setSceneContinuityImages: (value) => set({ sceneContinuityImages: value }),
       setImageResolution: (value) => set({ imageResolution: value }),
       setUseModelSheets: (value) => set({ useModelSheets: value }),
       setQaAutoReroll: (value) => set({ qaAutoReroll: value }),
@@ -260,6 +276,7 @@ export const useSettingsStore = create<SettingsStore>()(
         autoCharacterAnalysis: state.autoCharacterAnalysis,
         referenceImagePriority: state.referenceImagePriority,
         promptMode: state.promptMode,
+        sceneContinuityImages: state.sceneContinuityImages,
         imageResolution: state.imageResolution,
         useModelSheets: state.useModelSheets,
         qaAutoReroll: state.qaAutoReroll,
@@ -295,6 +312,7 @@ export const useReAnchorEveryN = () => useSettingsStore((state) => state.reAncho
 export const useAutoCharacterAnalysis = () => useSettingsStore((state) => state.autoCharacterAnalysis);
 export const useReferenceImagePriority = () => useSettingsStore((state) => state.referenceImagePriority);
 export const usePromptMode = () => useSettingsStore((state) => state.promptMode);
+export const useSceneContinuityImages = () => useSettingsStore((state) => state.sceneContinuityImages);
 export const useImageResolution = () => useSettingsStore((state) => state.imageResolution);
 export const useUseModelSheets = () => useSettingsStore((state) => state.useModelSheets);
 export const useQaAutoReroll = () => useSettingsStore((state) => state.qaAutoReroll);

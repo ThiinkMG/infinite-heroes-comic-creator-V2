@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { downloadAsZip } from './utils/zipDownload';
 import { ComicFace } from './types';
 import { downloadComicPages, ImageForDownload, formatFileSize } from './utils/downloadHelpers';
 
@@ -22,6 +23,8 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({ faces, title, onClos
     const [selectedFaceId, setSelectedFaceId] = useState<string | null>(null);
     const [expandedFaceId, setExpandedFaceId] = useState<string | null>(null);
     const [replacingFaceId, setReplacingFaceId] = useState<string | null>(null);
+    const [isZipping, setIsZipping] = useState(false);
+    const [zipProgress, setZipProgress] = useState<{ current: number; total: number } | null>(null);
     const [zoomLevel, setZoomLevel] = useState<number>(1);
 
     // Multi-select state for batch operations
@@ -250,14 +253,38 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({ faces, title, onClos
         a.click();
     };
 
+    /**
+     * Bundle every page into a single .zip.
+     *
+     * This used to fire one download per page with a 500ms gap. Browsers treat a
+     * burst of programmatic downloads as abusive — Chrome asks once and drops the
+     * rest if declined, Safari usually delivers only the first — so "Download All"
+     * returned an unpredictable subset of the issue.
+     */
     const downloadAll = async () => {
-        // Sequential download with a small delay to prevent browser blocking
-        for (let i = 0; i < sortedFaces.length; i++) {
-            const face = sortedFaces[i];
-            const safeTitle = (title || 'Comic').replace(/[^a-zA-Z0-9 -]/g, '').replace(/\s+/g, '-');
-            const pName = face.type === 'cover' ? '00-Cover' : face.type === 'back_cover' ? '99-BackCover' : `Page-${String(face.pageIndex).padStart(2, '0')}`;
-            downloadImage(face.imageUrl!, `${safeTitle}-${pName}.png`);
-            await new Promise(r => setTimeout(r, 500));
+        if (isZipping) return;
+        const safeTitle = (title || 'Comic').replace(/[^a-zA-Z0-9 -]/g, '').replace(/\s+/g, '-');
+        const entries = sortedFaces
+            .filter(face => face.imageUrl)
+            .map(face => {
+                const pName = face.type === 'cover' ? '00-Cover'
+                    : face.type === 'back_cover' ? '99-BackCover'
+                    : `Page-${String(face.pageIndex).padStart(2, '0')}`;
+                return { name: `${safeTitle}-${pName}.png`, data: face.imageUrl! };
+            });
+
+        if (entries.length === 0) return;
+
+        setIsZipping(true);
+        setZipProgress({ current: 0, total: entries.length });
+        try {
+            await downloadAsZip(entries, `${safeTitle}.zip`, p =>
+                setZipProgress({ current: p.current, total: p.total }));
+        } catch (e) {
+            console.error('[gallery] zip failed', e);
+        } finally {
+            setIsZipping(false);
+            setZipProgress(null);
         }
     };
 
@@ -516,10 +543,13 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({ faces, title, onClos
                     {!multiSelectMode && (
                         <button
                             onClick={downloadAll}
+                            disabled={isZipping}
                             className="comic-btn bg-blue-500 text-white px-3 md:px-6 py-2 border-[3px] border-black font-bold uppercase tracking-wider text-xs md:text-sm hover:bg-blue-400 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 focus:ring-offset-black"
                             aria-label="Download all images"
                         >
-                            Download All
+                            {isZipping
+                                ? (zipProgress ? `Zipping ${zipProgress.current}/${zipProgress.total}…` : 'Zipping…')
+                                : 'Download All'}
                         </button>
                     )}
                     <button

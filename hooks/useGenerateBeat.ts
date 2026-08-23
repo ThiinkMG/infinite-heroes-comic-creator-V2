@@ -263,6 +263,28 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
       coreDriver = `STORY PREMISE: ${customPremise || "A totally unique, unpredictable adventure"}. (Follow this premise strictly over standard genre tropes).`;
     }
 
+    /**
+     * The writer and the artist are different models with different safety
+     * policies, and the artist's is stricter. A scene the writer happily
+     * produces ("blood pooling", "the blade enters his throat") comes back from
+     * the image model as a refusal, and the user sees a failed page for a story
+     * their own AI wrote. Keeping scene descriptions renderable is cheaper than
+     * discovering the mismatch one page at a time.
+     *
+     * This constrains the SCENE field only. Captions and dialogue can still
+     * carry weight and consequence — they are lettered, not drawn.
+     */
+    const renderableSceneRule = `
+    SCENE DESCRIPTION LIMITS (applies to the "scene" and "art" fields only, not to captions or dialogue):
+    - Describe what a comic panel SHOWS. Imply violence through aftermath, reaction, posture, and framing rather than depicting injury.
+    - Do not describe blood, gore, wounds, corpses, mutilation, or dismemberment.
+    - Do not describe a weapon making contact with a body. Show the moment before, or the reaction after.
+    - Do not describe nudity, sexual content, or characters in states of undress.
+    - Do not describe self-harm, suicide, or harm to children.
+    - Real public figures, real brands, and real logos must not appear.
+    These are rendering limits, not story limits: the stakes stay high, the camera looks elsewhere.
+    `;
+
     // Guardrails to prevent everything becoming "Quantum Sci-Fi"
     const guardrails = `
     NEGATIVE CONSTRAINTS:
@@ -354,7 +376,7 @@ MAINTAIN STRONG CONTINUITY with the other pages in this batch. The 3 pages shoul
     const storySummary = buildStorySummary(history);
 
     // Build base instruction
-    let baseInstruction = `You are the Lead Writer for a mature comic book. Write ONE single, vivid, narrative beat for the NEXT page. ALL OUTPUT TEXT (Captions, Dialogue, Choices) MUST BE IN ${langName.toUpperCase()}. ${coreDriver} ${guardrails}`;
+    let baseInstruction = `You are the Lead Writer for a mature comic book. Write ONE single, vivid, narrative beat for the NEXT page. ALL OUTPUT TEXT (Captions, Dialogue, Choices) MUST BE IN ${langName.toUpperCase()}. ${coreDriver} ${guardrails}${renderableSceneRule}`;
     baseInstruction += `\nCONTEXT: ${storyInfo}\nCHARACTERS:\n${charContext}${visualRefBlock}${lockConstraintsBlock}`;
     baseInstruction += batchContext;
 

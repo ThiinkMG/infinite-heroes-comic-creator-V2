@@ -654,6 +654,57 @@ export function generateHardNegatives(
  * Keep this compact (target <= 80 words). If you are tempted to add a second
  * place that repeats one of these fields, change this function instead.
  */
+/**
+ * Strip artefacts that the profile analyser leaves in its own output.
+ *
+ * Two problems observed in real profiles:
+ *  - The JSON template's instruction text gets copied into the value. One stored
+ *    emblemDescription literally ended "Include this in EVERY panel featuring
+ *    this character." — which then reached the image model as if it described
+ *    part of the artwork.
+ *  - Proper nouns get invented for emblems ("the Solari emblem: a fractured
+ *    eight-pointed star"). Image models letter names they are given: a generated
+ *    page came back with the word "SOLARI" written across the character's chest.
+ */
+export function sanitizeProfileText(text: string): string {
+  if (!text) return '';
+  let out = ensureString(text);
+
+  // Instructions leaked from the analyser's own prompt template.
+  out = out.replace(/\bInclude this in EVERY panel[^.]*\.?/gi, '');
+  out = out.replace(/\bIf (?:no|NO)\b[^.]*leave empty string\.?/gi, '');
+  out = out.replace(/\bIf (?:an? )?[A-Z/]+ (?:image )?is provided[^.]*\.?/gi, '');
+
+  // "the Solari emblem:" / "her Solari emblem —" → drop the naming, keep the description.
+  out = out.replace(/\b(?:the|his|her|their)\s+[A-Z][\w'-]*\s+emblem\s*[:—-]\s*/g, '');
+  out = out.replace(/\b(?:known as|called)\s+(?:the\s+)?["“']?[A-Z][\w'-]*["”']?/g, '');
+
+  return out.replace(/\s{2,}/g, ' ').trim();
+}
+
+/**
+ * Physical traits that are part of the character's body rather than their
+ * costume, pulled from `distinguishingFeatures`.
+ *
+ * This field was previously dead: formatCanonicalCharacter only consulted it
+ * when `identityHeader.signature` was absent, and the analyser always populates
+ * signature. So for a character described as having "pointed elven ears and a
+ * long prehensile tail ending in an arrow-like spade", neither trait ever
+ * reached the image model — and neither appeared in any generated page.
+ */
+export function extractAnatomy(profile: CharacterProfile): string {
+  const raw = sanitizeProfileText(ensureString(profile.distinguishingFeatures));
+  if (!raw) return '';
+
+  // Keep clauses describing the body; drop ones that are really about costume,
+  // which is already covered by `clothing`.
+  const COSTUME_WORDS = /\b(suit|armor|armour|outfit|costume|cape|cloak|jacket|boots|gloves|belt|emblem|logo|uniform)\b/i;
+  const clauses = raw.split(/[,.;]\s*/).map(c => c.trim()).filter(Boolean);
+  const anatomy = clauses.filter(c => !COSTUME_WORDS.test(c));
+
+  return (anatomy.length ? anatomy : clauses).join(', ');
+}
+
 export function formatCanonicalCharacter(
   profile: CharacterProfile,
   roleLabel?: string,
@@ -685,28 +736,37 @@ export function formatCanonicalCharacter(
     if (traits.length) lines.push(traits.join(' | '));
   }
 
-  const clothing = ensureString(profile.clothing);
+  // Non-human anatomy must be stated explicitly. A negative alone ("no rounded
+  // ears") does not produce pointed ones; the model needs the positive fact.
+  const anatomy = extractAnatomy(profile);
+  if (anatomy) lines.push(`Anatomy — always draw: ${anatomy}`);
+
+  const clothing = sanitizeProfileText(profile.clothing);
   if (clothing) lines.push(`Wears: ${clothing}`);
 
-  if (profile.maskDescription) {
-    lines.push(`Mask (always worn): ${profile.maskDescription}`);
-  }
+  const mask = sanitizeProfileText(profile.maskDescription ?? '');
+  if (mask) lines.push(`Mask (always worn): ${mask}`);
 
-  if (profile.emblemDescription) {
+  const emblem = sanitizeProfileText(profile.emblemDescription ?? '');
+  if (emblem) {
     const placement = profile.emblemPlacement
       ? `, on ${profile.emblemPlacement.replace(/-/g, ' ')}`
       : '';
-    lines.push(`Emblem: ${profile.emblemDescription}${placement}`);
+    // "no text" is not decoration: a generated page came back with the emblem's
+    // invented name lettered across the character's chest.
+    lines.push(`Emblem (shape only, no text or letters): ${emblem}${placement}`);
   }
 
-  if (profile.weaponDescription) {
-    lines.push(`Carries: ${profile.weaponDescription}`);
-  }
+  const weapon = sanitizeProfileText(profile.weaponDescription ?? '');
+  if (weapon) lines.push(`Carries: ${weapon}`);
 
-  // Signature elements the legacy path spread across two separate blocks.
-  const signature = ih?.signature?.length
-    ? ih.signature.slice(0, 3)
-    : ensureString(profile.distinguishingFeatures).split(',').map(x => x.trim()).filter(Boolean).slice(0, 3);
+  // Every signature element, not the first three. The old slice(0, 3) silently
+  // dropped whatever the analyser happened to list fourth — in one real profile
+  // that was "prehensile tail with spade tip", and the tail appeared on no page
+  // of the finished issue.
+  const signature = (ih?.signature ?? [])
+    .map(x => sanitizeProfileText(x))
+    .filter(Boolean);
   if (signature.length) lines.push(`Always visible: ${signature.join(', ')}`);
 
   if (profile.hardNegatives?.length) {

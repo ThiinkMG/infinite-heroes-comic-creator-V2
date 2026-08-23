@@ -384,6 +384,8 @@ export const useGenerateOutline = (config: GenerateOutlineConfig) => {
 
     // Enhanced outline prompt with comic fundamentals
     const prompt = `
+SCENE DESCRIPTION LIMITS: every page you plan must be drawable by an image model with a strict safety policy. Imply violence through aftermath, reaction, and framing. No blood, gore, wounds, corpses, nudity, sexual content, self-harm, or harm to children. No real public figures, brands, or logos. Stakes stay high; the camera looks elsewhere.
+
 You are a professional comic book writer planning a ${comicConfig.MAX_STORY_PAGES}-page story.
 
 STORY TITLE: ${storyContext.title}

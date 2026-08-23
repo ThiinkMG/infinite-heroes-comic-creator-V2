@@ -234,6 +234,7 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
       promptMode = 'v2',
       imageResolution = '1k',
       useModelSheets = true,
+      sceneContinuityImages = false,
     } = useSettingsStore.getState();
     // Feature F: consistencyMode forces maximum strength for this generation call
     const consistencyStrength = consistencyMode ? 1.0 : (useSettingsStore.getState().consistencyStrength ?? 1.0);
@@ -399,9 +400,18 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
         ...scopedRoster.filter(r => !preserveSet.has(r.persona.id) && r.persona === focusPersona),
       ];
 
+      // Feeding the previous page's art back in compounds drift: one page renders
+      // a character slightly off, every later page copies it. Continuity now
+      // travels as text (ArtDirection.continuity) unless explicitly re-enabled.
       const sceneCtx: Array<{ base64: string; label: string }> = [];
-      if (prevImage && prevBeat) sceneCtx.push({ base64: prevImage, label: 'Previous page:' });
-      (adjacentPageImages ?? []).forEach(a => sceneCtx.push({ base64: a.base64, label: a.label }));
+      if (sceneContinuityImages) {
+        if (prevImage && prevBeat) sceneCtx.push({ base64: prevImage, label: 'Previous page:' });
+        (adjacentPageImages ?? []).forEach(a => sceneCtx.push({ base64: a.base64, label: a.label }));
+      } else if (adjacentPageImages?.length) {
+        // Adjacent pages are only ever passed by an explicit reroll request, so
+        // the user asked for them directly.
+        adjacentPageImages.forEach(a => sceneCtx.push({ base64: a.base64, label: a.label }));
+      }
 
       const v2PagePlan = pageIndex !== undefined
         ? storyOutline.pageBreakdown?.find(p => p.pageIndex === pageIndex)
@@ -992,11 +1002,15 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
 
         if (finishReason === 'SAFETY' || finishReason === 'BLOCKLIST') {
           failureReason = 'safety';
-        } else if (finishReason === 'PROHIBITED_CONTENT' || finishReason === 'OTHER') {
+        } else if (finishReason === 'PROHIBITED_CONTENT') {
           failureReason = 'content_policy';
         } else if (safetyRatings?.some(r => r.blocked)) {
           failureReason = 'safety';
         }
+        // 'OTHER' was previously reported as a content-policy block. It is a
+        // catch-all — recitation checks, internal errors, truncation — and
+        // labelling it a policy violation sent users hunting for offensive
+        // content that was never there.
 
         useMetricsStore.getState().recordGeneration('image', false, Date.now() - startTime, 'gemini');
         return { imageUrl: '', originalPrompt: finalPrompt, failureReason };
