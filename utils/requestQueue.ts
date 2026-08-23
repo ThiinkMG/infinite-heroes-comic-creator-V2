@@ -172,6 +172,27 @@ export class RequestQueue {
   // ==========================================================================
 
   /**
+   * Adjusts concurrency and rate limits on a live queue.
+   *
+   * Needed because these are user settings that can change between batches,
+   * and rebuilding the queue would drop in-flight work.
+   *
+   * @param options - Partial options to apply; omitted fields keep their value
+   */
+  updateOptions(options: RequestQueueOptions): void {
+    if (options.maxConcurrent !== undefined) {
+      this.maxConcurrent = Math.max(1, options.maxConcurrent);
+    }
+    if (options.maxPerMinute !== undefined) {
+      this.maxPerMinute = Math.max(1, options.maxPerMinute);
+    }
+    // A raised limit may unblock queued work immediately.
+    if (!this.isPaused) {
+      this.processQueue();
+    }
+  }
+
+  /**
    * Adds a request to the queue
    *
    * @param request - The request to enqueue
@@ -193,6 +214,34 @@ export class RequestQueue {
     }
 
     return request.id;
+  }
+
+  /**
+   * Promise-returning wrapper around {@link enqueue}.
+   *
+   * `enqueue` returns an id and reports results through callbacks, which makes it
+   * awkward to use from ordinary async code — the likely reason this queue sat
+   * unused while the generation loop ran raw sequential awaits with no rate
+   * limiting. `submit` gives callers a plain awaitable while keeping the queue's
+   * concurrency and per-minute throttling.
+   *
+   * @param execute - The async work to run when a slot frees up
+   * @param opts - Optional id and priority
+   * @returns A promise resolving with the work's result, or rejecting with its error
+   */
+  submit<T>(
+    execute: () => Promise<T>,
+    opts: { id?: string; priority?: RequestPriority } = {},
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.enqueue<T>({
+        id: opts.id ?? generateRequestId('submit'),
+        priority: opts.priority ?? 'normal',
+        execute,
+        onComplete: resolve,
+        onError: reject,
+      });
+    });
   }
 
   /**
