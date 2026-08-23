@@ -6,6 +6,8 @@
 import React, { useState, useEffect } from 'react';
 import { ComicFace, getComicConfig, StoryContext } from './types';
 import { LoadingFX } from './LoadingFX';
+import { describeFace } from './utils/comicAccessibility';
+import { useCharacterStore } from './stores/useCharacterStore';
 
 interface PanelProps {
     face?: ComicFace;
@@ -53,7 +55,21 @@ export const Panel: React.FC<PanelProps> = ({ face, allFaces, storyContext, gene
     return (
         <div className={`panel-container relative group ${isFullBleed ? '!p-0 !bg-[#0a0a0a]' : ''}`}>
             <div className="gloss"></div>
-            {face.imageUrl && <img key={face.imageUrl.slice(-20)} src={face.imageUrl} alt={`Comic panel ${face.pageIndex !== undefined ? `page ${face.pageIndex}` : ''}`} className={`panel-image ${isFullBleed ? '!object-cover' : ''}`} />}
+            {face.imageUrl && (
+                <img
+                    key={face.imageUrl.slice(-20)}
+                    src={face.imageUrl}
+                    // Real alt text: the scene, caption, and dialogue that describe
+                    // what is actually in the panel. Without this the substance of
+                    // the comic is invisible to screen readers.
+                    alt={describeFace(face, {
+                        hero: useCharacterStore.getState().hero,
+                        friend: useCharacterStore.getState().friend,
+                        others: useCharacterStore.getState().additionalCharacters,
+                    })}
+                    className={`panel-image ${isFullBleed ? '!object-cover' : ''}`}
+                />
+            )}
             
             {/* Failed Generation State */}
             {hasFailed && (() => {

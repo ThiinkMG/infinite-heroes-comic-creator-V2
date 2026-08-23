@@ -29,7 +29,7 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({
 }) => {
     const [isVisible, setIsVisible] = useState(false);
     const tooltipId = useId();
-    const containerRef = useRef<HTMLDivElement>(null);
+    const containerRef = useRef<HTMLSpanElement>(null);
 
     // Close tooltip when clicking outside
     useEffect(() => {
@@ -141,7 +141,7 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({
     };
 
     return (
-        <div
+        <span
             ref={containerRef}
             className={`relative inline-flex items-center ml-1 ${className}`}
         >
@@ -160,22 +160,22 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({
             </button>
 
             {isVisible && (
-                <div
+                <span
                     id={tooltipId}
                     role="tooltip"
                     style={getPositionStyles()}
-                    className="absolute w-56 p-2.5 bg-white text-black text-xs font-comic border-2 border-black drop-shadow-[3px_3px_0px_rgba(0,0,0,0.3)] z-[500]"
+                    className="absolute block w-56 p-2.5 bg-white text-black text-xs font-comic border-2 border-black drop-shadow-[3px_3px_0px_rgba(0,0,0,0.3)] z-[500]"
                 >
                     {title && (
-                        <p className="font-bold text-indigo-700 mb-1 uppercase text-[10px]">
+                        <span className="block font-bold text-indigo-700 mb-1 uppercase text-[10px]">
                             {title}
-                        </p>
+                        </span>
                     )}
-                    <p style={{ textTransform: 'none' }}>{text}</p>
-                    <div style={getArrowStyles()} />
-                </div>
+                    <span className="block" style={{ textTransform: 'none' }}>{text}</span>
+                    <span className="block" style={getArrowStyles()} />
+                </span>
             )}
-        </div>
+        </span>
     );
 };
 
