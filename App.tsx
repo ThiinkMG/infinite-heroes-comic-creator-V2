@@ -55,6 +55,7 @@ import { GenerationConfirmDialog, type GenerationPlan } from './components/Gener
 import type { ModelSheetState } from './components/ModelSheetStrip';
 import { ScriptReader } from './components/ScriptReader';
 import { useConfirm } from './components/ConfirmDialog';
+import { useToast } from './contexts/ToastContext';
 import { createImageQueue } from './utils/requestQueue';
 import { useExportImport } from './hooks/useExportImport';
 import { buildAllCharacterReferences } from './utils/buildCharacterReference';
@@ -480,6 +481,10 @@ const App: React.FC = () => {
   // Replaces window.confirm, which returns false when the browser suppresses it
   // and so made confirmed actions look like dead buttons.
   const { confirm, confirmDialog } = useConfirm();
+  // The app's only way to tell the user something went wrong. Messages that used
+  // to go to console.warn were invisible, which made failed validation look like
+  // a dead button.
+  const { showToast } = useToast();
   /**
    * Pages already rendered in a just-restored draft. Drives the "open the comic"
    * affordance on the setup screen; zero means there is nothing to resume.
@@ -1438,7 +1443,7 @@ const App: React.FC = () => {
 
   const handleOutlineUpload = async (file: File) => {
     if (file.type && !file.type.startsWith('text/') && !file.name.match(/\.(txt|md)$/i)) {
-       console.warn("Please upload standard .txt or .md text files only. PDFs are not supported and may crash the editor.");
+       showToast({ type: 'error', message: 'Outlines must be .txt or .md files. PDFs are not supported.' });
        return;
     }
     try {
@@ -1463,11 +1468,11 @@ const App: React.FC = () => {
   const handleStartAdventure = () => {
     // Validate basic requirements before showing mode selection
     if (!getHero()) {
-      console.warn("Please upload a hero portrait first.");
+      showToast({ type: 'warning', message: 'Add a portrait for your main character before starting.' });
       return;
     }
     if (selectedGenre === 'Custom' && !customPremise.trim()) {
-      console.warn("Please enter a custom story premise.");
+      showToast({ type: 'warning', message: 'Custom genre needs a story premise — describe what happens.' });
       return;
     }
     setShowModeSelection(true);
@@ -1624,7 +1629,7 @@ const App: React.FC = () => {
             setShowProfilesStep(true);
         } catch (e) {
             console.error("Profile generation failed before starting:", e);
-            console.error("Failed to analyze character portraits. Check network or API key.");
+            showToast({ type: 'error', message: 'Could not analyse the character portraits. Check your API key and connection.' });
         } finally {
             setIsGeneratingProfiles(false);
         }
@@ -2021,7 +2026,16 @@ Create a powerful, memorable conclusion that honors the user's story path.
 
       // Generate with enhanced context
       try {
-          await generateSinglePage(faceId, pageIndex, type, enhancedInstruction, enhancedRefImages.length > 0 ? enhancedRefImages : undefined);
+          // Preserve the page's caption and dialogue. Quick Retry used to regenerate
+          // the beat, so a retry could return art with no speech bubbles at all —
+          // the same defect fixed for the reroll modal in the previous session.
+          const retryFace = historyRef.current.find(fc => fc.id === faceId);
+          await generateSinglePage(
+              faceId, pageIndex, type, enhancedInstruction,
+              enhancedRefImages.length > 0 ? enhancedRefImages : undefined,
+              undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+              'both', retryFace?.narrative,
+          );
       } catch (e) {
           console.error('Quick retry failed:', e);
           updateFaceState(faceId, { isLoading: false, hasFailed: true });
@@ -2032,9 +2046,15 @@ Create a powerful, memorable conclusion that honors the user's story path.
       const items: { id: string; base64: string; label: string; charId: string }[] = [];
       const addPersona = (p: Persona | null, label: string) => {
           if (!p) return;
+          // Model sheet first: it is the canonical reference, and listing it at the
+          // top makes that legible. Its absence from this gallery is why every
+          // reroll used to fall back to raw portraits.
+          if (p.modelSheet) items.push({ id: `${p.id}-sheet`, base64: p.modelSheet, label: `${label} Model Sheet`, charId: p.id });
           if (p.base64) items.push({ id: `${p.id}-portrait`, base64: p.base64, label: `${label} Portrait`, charId: p.id });
           const refs = p.referenceImages || (p.referenceImage ? [p.referenceImage] : []);
           refs.forEach((r, i) => items.push({ id: `${p.id}-ref-${i}`, base64: r, label: `${label} Ref ${i+1}`, charId: p.id }));
+          if (p.emblemImage) items.push({ id: `${p.id}-emblem`, base64: p.emblemImage, label: `${label} Emblem`, charId: p.id });
+          if (p.weaponImage) items.push({ id: `${p.id}-weapon`, base64: p.weaponImage, label: `${label} Weapon`, charId: p.id });
       };
       addPersona(hero, hero?.name || 'Hero');
       addPersona(friend, friend?.name || 'Co-Star');
@@ -2605,7 +2625,7 @@ Create a powerful, memorable conclusion that honors the user's story path.
   /** Use an image the user already has as the issue's cover. */
   const handleCoverUpload = async (file: File) => {
     if (!file.type.startsWith('image/')) {
-      console.warn('[cover] not an image file');
+      showToast({ type: 'error', message: 'Cover art must be an image file.' });
       return;
     }
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -2887,29 +2907,32 @@ Create a powerful, memorable conclusion that honors the user's story path.
   const importDraft = (file: File) => {
     console.log('[importDraft] Called with file:', file.name, file.size, 'bytes');
     if (!file.name.endsWith('.json') && file.type !== 'application/json') {
-        console.warn('Please select a valid .json draft file.');
+        showToast({ type: 'error', message: 'That is not a draft file. Choose a .json saved from this app.' });
         return;
     }
     try {
       const reader = new FileReader();
-      reader.onerror = () => { console.error('Failed to read the draft file.'); };
+      reader.onerror = () => showToast({ type: 'error', message: 'Could not read that file from disk.' });
       reader.onload = (e) => {
         try {
           const text = e.target?.result as string;
-          if (!text || !text.trim().startsWith('{')) { console.warn('Invalid draft file format.'); return; }
+          if (!text || !text.trim().startsWith('{')) {
+            showToast({ type: 'error', message: 'That draft file looks damaged and could not be read.' });
+            return;
+          }
           const parsed = JSON.parse(text);
           console.log('[importDraft] Parsed keys:', Object.keys(parsed));
           const hasPages = restoreDraftSnapshot(parsed);
           if (!hasPages) console.log("Setup fields populated successfully!");
         } catch(err) {
           console.error('Draft parse error:', err);
-          console.error("Invalid draft file. Could not parse JSON."); 
+          showToast({ type: 'error', message: 'That draft file could not be read — it may be from a different app.' });
         }
       };
       reader.readAsText(file);
     } catch (err) {
       console.error('Draft import error:', err);
-      console.error('Failed to import draft file.');
+      showToast({ type: 'error', message: 'Could not open that draft file.' });
     }
   };
 
@@ -3812,6 +3835,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
 
       {showGallery && (
         <GalleryModal
+              onNotify={showToast}
           faces={comicFaces}
           title={storyContext.title || 'Comic'}
           onClose={() => setShowGallery(false)}

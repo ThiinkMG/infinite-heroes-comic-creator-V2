@@ -125,6 +125,16 @@ export const RerollModal: React.FC<RerollModalProps> = ({
      * speech bubbles at all.
      */
     const [regenerateNarrative, setRegenerateNarrative] = useState(false);
+    /**
+     * Send ONLY the ticked references, suppressing the cast's model sheets and
+     * portraits.
+     *
+     * Off by default, and deliberately explicit. This used to be derived from
+     * "are any references ticked", which is true by default — so every reroll
+     * silently suppressed the model sheets and fell back to raw portraits.
+     * Ticking a reference should say what to include, never what to exclude.
+     */
+    const [useOnlySelectedRefs, setUseOnlySelectedRefs] = useState(false);
 
     // === REFERENCE IMAGE OPTIONS ===
     // Simplified: Gallery selection directly controls what gets sent
@@ -276,7 +286,9 @@ export const RerollModal: React.FC<RerollModalProps> = ({
             applyFlashbackStyle: applyFlashbackStyle || undefined,
             // Simplified: selection IS the control
             reinforceWithReferenceImages: selectedIds.size > 0 || undefined,
-            useSelectedRefsOnly: selectedIds.size > 0 || undefined, // Always use only selected
+            // Additive by default: selected refs join the cast's model sheets rather
+            // than replacing them. Only an explicit opt-in suppresses the cast.
+            useSelectedRefsOnly: useOnlySelectedRefs || undefined,
             prevPageImageUrl: usePrevPage ? prevPageImageUrl : undefined,
             nextPageImageUrl: useNextPage ? nextPageImageUrl : undefined,
             consistencyMode: isConsistencyMode || lockedLines.length > 0 || undefined,
@@ -561,6 +573,25 @@ export const RerollModal: React.FC<RerollModalProps> = ({
                                 />
 
                                 {/* Reference Images */}
+                                <label className="flex items-start gap-2 border-2 border-black bg-blue-50 p-2 mb-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={useOnlySelectedRefs}
+                                        onChange={(e) => setUseOnlySelectedRefs(e.target.checked)}
+                                        className="mt-0.5 w-4 h-4 accent-blue-600"
+                                    />
+                                    <span>
+                                        <span className="font-comic text-xs uppercase text-blue-900 block">
+                                            Use only the references I tick
+                                        </span>
+                                        <span className="font-ui text-[11px] text-gray-700">
+                                            Off (recommended): ticked references are added to each character&rsquo;s
+                                            model sheet. On: the model sheets and portraits are suppressed and only
+                                            your ticked images are sent &mdash; usually worse for likeness.
+                                        </span>
+                                    </span>
+                                </label>
+
                                 <ReferenceImageGallery
                                     allRefImages={allRefImages}
                                     selectedIds={selectedIds}

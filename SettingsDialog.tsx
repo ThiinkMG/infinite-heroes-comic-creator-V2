@@ -180,6 +180,27 @@ export const SettingsDialog: React.FC<Props> = ({ serverKeyExists, anthropicServ
     const autoCharacterAnalysis = useSettingsStore(s => s.autoCharacterAnalysis);
     const referenceImagePriority = useSettingsStore(s => s.referenceImagePriority);
     const setConsistencyStrength = useSettingsStore(s => s.setConsistencyStrength);
+
+    // Consistency and generation settings added alongside the model-sheet work.
+    // These shipped without controls and could only be changed by editing
+    // localStorage, which meant their defaults were the only values in use.
+    const useModelSheets = useSettingsStore(s => s.useModelSheets);
+    const setUseModelSheets = useSettingsStore(s => s.setUseModelSheets);
+    const sceneContinuityImages = useSettingsStore(s => s.sceneContinuityImages);
+    const setSceneContinuityImages = useSettingsStore(s => s.setSceneContinuityImages);
+    const useCoverAsStyleReference = useSettingsStore(s => s.useCoverAsStyleReference);
+    const setUseCoverAsStyleReference = useSettingsStore(s => s.setUseCoverAsStyleReference);
+    const qaAutoReroll = useSettingsStore(s => s.qaAutoReroll);
+    const setQaAutoReroll = useSettingsStore(s => s.setQaAutoReroll);
+    const qaThreshold = useSettingsStore(s => s.qaThreshold);
+    const setQaThreshold = useSettingsStore(s => s.setQaThreshold);
+    const imageResolution = useSettingsStore(s => s.imageResolution);
+    const setImageResolution = useSettingsStore(s => s.setImageResolution);
+    const maxConcurrentPages = useSettingsStore(s => s.maxConcurrentPages);
+    const setMaxConcurrentPages = useSettingsStore(s => s.setMaxConcurrentPages);
+    const promptMode = useSettingsStore(s => s.promptMode);
+    const setPromptMode = useSettingsStore(s => s.setPromptMode);
+    const [generationOpen, setGenerationOpen] = useState(false);
     const setReAnchorEveryN = useSettingsStore(s => s.setReAnchorEveryN);
     const setAutoCharacterAnalysis = useSettingsStore(s => s.setAutoCharacterAnalysis);
     const setReferenceImagePriority = useSettingsStore(s => s.setReferenceImagePriority);
@@ -491,6 +512,160 @@ export const SettingsDialog: React.FC<Props> = ({ serverKeyExists, anthropicServ
                                             <p className="font-comic text-[10px] text-gray-500">Place character portraits last in prompt (highest AI weight). Disable to prioritize scene continuity instead.</p>
                                         </div>
                                     </label>
+
+                                    <label className="flex items-center gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={useModelSheets}
+                                            onChange={e => setUseModelSheets(e.target.checked)}
+                                            className="w-5 h-5 accent-blue-600 cursor-pointer"
+                                            aria-label="Use character model sheets"
+                                        />
+                                        <div>
+                                            <span className="font-comic text-xs font-bold text-blue-800 uppercase group-hover:text-blue-600">Use Model Sheets</span>
+                                            <p className="font-comic text-[10px] text-gray-500">Draw from each character&rsquo;s model sheet instead of their raw photo. This is the single biggest factor in keeping faces consistent. Turn off only to compare.</p>
+                                        </div>
+                                    </label>
+
+                                    <label className="flex items-center gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={useCoverAsStyleReference}
+                                            onChange={e => setUseCoverAsStyleReference(e.target.checked)}
+                                            className="w-5 h-5 accent-blue-600 cursor-pointer"
+                                            aria-label="Use the cover as a style reference"
+                                        />
+                                        <div>
+                                            <span className="font-comic text-xs font-bold text-blue-800 uppercase group-hover:text-blue-600">Cover As Style Anchor</span>
+                                            <p className="font-comic text-[10px] text-gray-500">Send your cover to every page as a style and colour reference (never for faces). Costs one extra image per page. Worth it when the cover is exactly the look you want.</p>
+                                        </div>
+                                    </label>
+
+                                    <label className="flex items-center gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={sceneContinuityImages}
+                                            onChange={e => setSceneContinuityImages(e.target.checked)}
+                                            className="w-5 h-5 accent-amber-600 cursor-pointer"
+                                            aria-label="Send the previous page as a continuity reference"
+                                        />
+                                        <div>
+                                            <span className="font-comic text-xs font-bold text-amber-800 uppercase group-hover:text-amber-600">Previous-Page Continuity ⚠️</span>
+                                            <p className="font-comic text-[10px] text-gray-500">Send the previous page&rsquo;s art for background matching. Improves scene flow but compounds drift: once one page is off-model, later pages copy it. Off is recommended.</p>
+                                        </div>
+                                    </label>
+
+                                    <label className="flex items-center gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={qaAutoReroll}
+                                            onChange={e => setQaAutoReroll(e.target.checked)}
+                                            className="w-5 h-5 accent-blue-600 cursor-pointer"
+                                            aria-label="Automatically reroll pages that drift"
+                                        />
+                                        <div>
+                                            <span className="font-comic text-xs font-bold text-blue-800 uppercase group-hover:text-blue-600">Auto-Fix Drifted Pages</span>
+                                            <p className="font-comic text-[10px] text-gray-500">Score every page against its references and reroll once if the characters drifted. Adds one vision call per page, and roughly 40% to generation time.</p>
+                                        </div>
+                                    </label>
+
+                                    {qaAutoReroll && (
+                                        <div className="pl-8">
+                                            <div className="flex justify-between items-center mb-1">
+                                                <span className="font-comic text-[10px] text-gray-600 uppercase">Reroll below</span>
+                                                <span className="font-comic text-xs font-bold text-blue-700">{qaThreshold} / 10</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min={3}
+                                                max={9}
+                                                step={1}
+                                                value={qaThreshold}
+                                                onChange={e => setQaThreshold(parseInt(e.target.value))}
+                                                className="w-full accent-blue-600 cursor-pointer"
+                                                aria-label="Quality threshold for automatic reroll"
+                                            />
+                                            <p className="font-comic text-[10px] text-gray-500 mt-1">Higher rerolls more often and costs more. 7 is a reasonable default.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Generation — cost, speed, and output size */}
+                    <div className="border-[3px] border-purple-400 bg-purple-50">
+                        <button
+                            onClick={() => setGenerationOpen(o => !o)}
+                            className="w-full flex justify-between items-center p-4 text-left"
+                            aria-expanded={generationOpen}
+                        >
+                            <p className="font-comic text-sm font-bold uppercase text-purple-900">⚙️ Generation</p>
+                            <span className="font-comic text-purple-700">{generationOpen ? '▼' : '▶'}</span>
+                        </button>
+                        {generationOpen && (
+                            <div className="px-4 pb-4">
+                                <div className="flex flex-col gap-4">
+                                    <div>
+                                        <span className="font-comic text-xs font-bold text-purple-800 uppercase block mb-1">Image Quality</span>
+                                        <div className="flex gap-2">
+                                            {([
+                                                ['1k', 'Draft'],
+                                                ['2k', 'Print'],
+                                                ['4k', 'Max'],
+                                            ] as const).map(([value, label]) => (
+                                                <button
+                                                    key={value}
+                                                    onClick={() => setImageResolution(value)}
+                                                    className={`comic-btn flex-1 font-comic text-xs uppercase px-2 py-1.5 border-2 border-black ${
+                                                        imageResolution === value ? 'bg-purple-600 text-white' : 'bg-white text-black hover:bg-purple-100'
+                                                    }`}
+                                                >
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <p className="font-comic text-[10px] text-gray-500 mt-1">Draft (1K) is about 130 DPI at comic trim size — fine on screen, too low to print. Choose Print or Max if you intend to export a physical issue. Higher costs more per page.</p>
+                                    </div>
+
+                                    <div>
+                                        <div className="flex justify-between items-center mb-1">
+                                            <span className="font-comic text-xs font-bold text-purple-800 uppercase">Pages At Once</span>
+                                            <span className="font-comic text-xs font-bold text-purple-700">{maxConcurrentPages}</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min={1}
+                                            max={4}
+                                            step={1}
+                                            value={maxConcurrentPages}
+                                            onChange={e => setMaxConcurrentPages(parseInt(e.target.value))}
+                                            className="w-full accent-purple-600 cursor-pointer"
+                                            aria-label="Pages generated at once"
+                                        />
+                                        <p className="font-comic text-[10px] text-gray-500 mt-1">Generating several pages at once is faster, but pages cannot see each other — backgrounds and lighting match less well between them. Character likeness is unaffected.</p>
+                                    </div>
+
+                                    <div>
+                                        <span className="font-comic text-xs font-bold text-purple-800 uppercase block mb-1">Prompt Engine</span>
+                                        <div className="flex gap-2">
+                                            {([
+                                                ['v2', 'Current'],
+                                                ['legacy', 'Legacy'],
+                                            ] as const).map(([value, label]) => (
+                                                <button
+                                                    key={value}
+                                                    onClick={() => setPromptMode(value)}
+                                                    className={`comic-btn flex-1 font-comic text-xs uppercase px-2 py-1.5 border-2 border-black ${
+                                                        promptMode === value ? 'bg-purple-600 text-white' : 'bg-white text-black hover:bg-purple-100'
+                                                    }`}
+                                                >
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <p className="font-comic text-[10px] text-gray-500 mt-1">Diagnostic. Legacy is the older prompt builder, kept only for comparing results. Leave on Current unless you are testing.</p>
+                                    </div>
                                 </div>
                             </div>
                         )}

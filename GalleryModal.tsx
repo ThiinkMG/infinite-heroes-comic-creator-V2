@@ -7,6 +7,8 @@ interface GalleryModalProps {
     faces: ComicFace[];
     title: string;
     onClose: () => void;
+    /** Surface a message to the user. Supplied by the host so this modal does not depend on the toast context directly. */
+    onNotify?: (msg: { type: 'success' | 'error' | 'warning' | 'info'; message: string }) => void;
     onReplaceImage?: (faceId: string, newImageUrl: string) => void;
     onGenerateCoverVariants?: () => void;
     onBatchRegenerate?: (faceIds: string[]) => void;
@@ -16,7 +18,7 @@ interface GalleryModalProps {
 type SortOption = 'page-order' | 'generation-time';
 type FilterOption = 'all' | 'cover' | 'story' | 'back_cover';
 
-export const GalleryModal: React.FC<GalleryModalProps> = ({ faces, title, onClose, onReplaceImage, onGenerateCoverVariants, onBatchRegenerate, onBatchDownload }) => {
+export const GalleryModal: React.FC<GalleryModalProps> = ({ faces, title, onClose, onNotify, onReplaceImage, onGenerateCoverVariants, onBatchRegenerate, onBatchDownload }) => {
     const validFaces = faces.filter(f => f.imageUrl && !f.isLoading);
 
     // State for selection and view modes
@@ -302,7 +304,7 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({ faces, title, onClos
 
         // Validate file type
         if (!file.type.startsWith('image/')) {
-            console.warn('Please select an image file (PNG, JPG, etc.)');
+            onNotify?.({ type: 'error', message: 'Replacement must be an image file (PNG, JPG).' });
             setReplacingFaceId(null);
             e.target.value = '';
             return;

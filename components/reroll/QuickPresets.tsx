@@ -21,7 +21,15 @@ export interface QuickPreset {
     prompt: string;
 }
 
-// Gemini-optimized presets (text-based targeting, no inpainting)
+/*
+ * Presets express intent through `modes`, which App.tsx turns into instruction
+ * text. `prompt` carries only what the mode does NOT already say.
+ *
+ * Each preset used to carry a full prose instruction as well as its modes, so
+ * selecting one emitted two near-identical, differently-worded directions — the
+ * exact redundancy promptAssemblerV2 exists to prevent, reintroduced through the
+ * instruction path, which the assembler passes through untouched.
+ */
 export const QUICK_PRESETS: QuickPreset[] = [
     {
         id: 'fix-face',
@@ -30,7 +38,8 @@ export const QUICK_PRESETS: QuickPreset[] = [
         description: 'Regenerate with better facial accuracy',
         modes: ['expression_only'],
         useRefs: true,
-        prompt: 'Keep the exact same scene, background, and pose. Only adjust facial features to better match the reference portrait. Maintain all other elements identically.'
+        // 'expression_only' already covers preserving pose, clothing, and background.
+        prompt: 'Match the facial structure to the reference as closely as possible.'
     },
     {
         id: 'keep-scene',
@@ -39,7 +48,8 @@ export const QUICK_PRESETS: QuickPreset[] = [
         description: 'Fix characters while preserving background',
         modes: ['characters_only'],
         useRefs: true,
-        prompt: 'Preserve the background, environment, and scene composition exactly. Regenerate only the characters to match their reference images more accurately.'
+        // 'characters_only' already covers preserving the background.
+        prompt: ''
     },
     {
         id: 'fix-costume',
@@ -48,7 +58,8 @@ export const QUICK_PRESETS: QuickPreset[] = [
         description: 'Correct outfit, emblem, and accessories',
         modes: ['outfit_only', 'emblem_only'],
         useRefs: true,
-        prompt: 'Keep the face, pose, and scene identical. Update only the costume, emblem placement, and accessories to match the character references exactly.'
+        // 'outfit_only' and 'emblem_only' already cover the costume and the emblem.
+        prompt: ''
     },
     {
         id: 'full-redo',
@@ -66,7 +77,9 @@ export const QUICK_PRESETS: QuickPreset[] = [
         description: 'Enforce all locked character attributes as hard constraints',
         modes: ['full'],
         useRefs: true,
-        prompt: 'Maintain all character appearances EXACTLY as shown in reference images. Same face, same outfit, same emblem, same weapon. No creative changes to character appearance.',
+        // No mode expresses "change nothing about the characters", so this one
+        // genuinely needs prose. Kept to a single sentence.
+        prompt: 'Do not alter any character\u2019s face, outfit, emblem, or weapon.',
     },
     {
         id: 'fix-background',
@@ -75,7 +88,9 @@ export const QUICK_PRESETS: QuickPreset[] = [
         description: 'Improve environment and lighting while keeping all characters unchanged',
         modes: ['full'],
         useRefs: false,
-        prompt: 'Preserve all characters exactly as-is — same face, same outfit, same pose. Only improve the background, environment, lighting, and scene atmosphere to better match the story context. Do NOT change any character\'s appearance.',
+        // Runs as a 'full' redo, which says nothing about preserving characters,
+        // so this instruction is the only thing scoping the change.
+        prompt: 'Change only the background, environment, and lighting. Leave every character exactly as they are.',
     }
 ];
 
