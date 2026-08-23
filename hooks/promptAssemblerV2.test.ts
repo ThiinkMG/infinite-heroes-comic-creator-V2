@@ -254,6 +254,55 @@ describe('buildV2Prompt — rules', () => {
   });
 });
 
+describe('buildV2Prompt — reroll paths', () => {
+  it('keeps character descriptions when cast images are suppressed', () => {
+    const { promptText, contents } = buildV2Prompt(input({
+      suppressCastImages: true,
+      characters: [character({
+        outfitRefs: ['OUTFIT'],
+        emblem: { image: 'EMB', placement: 'left chest' },
+      })],
+    }), mime);
+
+    // "Use only selected refs" swaps the pictures, not the identities.
+    // Dropping the descriptions left rerolls with no idea who they were drawing.
+    expect(promptText).toContain('KARA VANCE');
+    expect(promptText).toContain('pale grey');
+    expect(contents.filter(c => 'inlineData' in c)).toHaveLength(0);
+    expect(promptText).toContain('reference images supplied at the end');
+  });
+
+  it('sends a face close-up alongside a model sheet', () => {
+    const { promptText, contents } = buildV2Prompt(input({
+      characters: [character({ isModelSheet: true, facePortrait: 'PORTRAIT' })],
+    }), mime);
+
+    // A wide multi-figure sheet gives each face few pixels after downsampling;
+    // the portrait carries facial detail the sheet cannot.
+    expect(promptText).toContain('model sheet');
+    expect(promptText).toContain('face close-up');
+    expect(contents.filter(c => 'inlineData' in c)).toHaveLength(2);
+  });
+
+  it('does not send a face close-up when there is no model sheet', () => {
+    const { promptText } = buildV2Prompt(input({
+      characters: [character({ isModelSheet: false, facePortrait: 'PORTRAIT' })],
+    }), mime);
+    // Without a sheet, referenceImage IS the portrait — sending it twice is the
+    // duplication this assembler exists to prevent.
+    expect(promptText).not.toContain('face close-up');
+  });
+
+  it('carries reroll instructions without bracket notation', () => {
+    // Gemini renders [BRACKETED] tokens literally as captions and speech
+    // bubbles (learned in Session 30). Reroll instructions must stay prose.
+    const instruction = 'Redraw only the characters, matching their cast references more closely.';
+    const { promptText } = buildV2Prompt(input({ instruction }), mime);
+    expect(promptText).toContain(instruction);
+    expect(promptText).not.toMatch(/[[A-Z][A-Z _-]{4,}]/);
+  });
+});
+
 describe('buildV2Prompt — page types', () => {
   it('suppresses all lettering on an overlay cover', () => {
     const { promptText } = buildV2Prompt(input({

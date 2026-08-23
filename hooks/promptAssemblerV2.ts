@@ -46,6 +46,15 @@ export interface V2Character {
   referenceImage?: string;
   /** True when referenceImage is a generated model sheet rather than a raw portrait. */
   isModelSheet: boolean;
+  /**
+   * Original portrait, sent alongside a model sheet.
+   *
+   * A 16:9 sheet holding three full-body views plus expression studies gives
+   * each individual face very few pixels once the model downsamples it. The
+   * sheet is the better costume and silhouette reference; the portrait is the
+   * better face reference. Sending both beats choosing one.
+   */
+  facePortrait?: string;
   /** Additional costume references. Capped at one — more dilutes the portrait signal. */
   outfitRefs: string[];
   emblem?: { image: string; placement: string };
@@ -79,6 +88,12 @@ export interface V2Input {
   /** 0.3-1.0. Controls descriptor detail and how hard the match rule is worded. */
   consistencyStrength: number;
   compact: boolean;
+  /**
+   * Suppress the cast's own reference images, because the caller is supplying
+   * replacements. The written descriptions are still emitted: "use only the
+   * refs I picked" means swap the pictures, not forget who the character is.
+   */
+  suppressCastImages?: boolean;
 }
 
 export type PromptPart = { text: string } | { inlineData: { mimeType: string; data: string } };
@@ -113,7 +128,7 @@ export function buildV2Prompt(
   const {
     beat, type, storyContext, genre, characters, sceneContext, preserveImage,
     instruction, shotType, isFlashback, balloonShape, panelLayout, location,
-    publisherLogo, consistencyStrength, compact,
+    publisherLogo, consistencyStrength, compact, suppressCastImages = false,
   } = input;
 
   const contents: PromptPart[] = [];
@@ -145,13 +160,15 @@ export function buildV2Prompt(
   //    images. This is the ONLY place character appearance is described.
   // --------------------------------------------------------------------------
   if (characters.length > 0) {
-    const anySheet = characters.some(c => c.isModelSheet);
+    const anySheet = !suppressCastImages && characters.some(c => c.isModelSheet);
     push(
       `\nCAST — the characters on this page.\n` +
       `Each description below applies to the image or images that follow it. ` +
-      (anySheet
-        ? `Model sheets show each character from several angles; use them for face, hair, skin, and costume. `
-        : `Reference images are neutral standing portraits; use them for face, hair, skin, and costume. `) +
+      (suppressCastImages
+        ? `Match these written descriptions to the reference images supplied at the end. `
+        : anySheet
+          ? `Model sheets show each character from several angles; use them for face, hair, skin, and costume. `
+          : `Reference images are neutral standing portraits; use them for face, hair, skin, and costume. `) +
       `Pose each character to fit the scene — do not copy the reference pose.`
     );
 
@@ -167,20 +184,26 @@ export function buildV2Prompt(
 
       push(`\n${descriptor}`);
 
-      if (c.referenceImage) {
+      if (c.referenceImage && !suppressCastImages) {
         push(c.isModelSheet ? `${name} model sheet:` : `${name} reference:`);
         pushImage(c.referenceImage);
       }
+      // Face close-up alongside the sheet: the sheet carries costume and
+      // proportion, this carries facial detail at usable resolution.
+      if (c.isModelSheet && c.facePortrait && !suppressCastImages) {
+        push(`${name} face close-up — use this for facial features:`);
+        pushImage(c.facePortrait);
+      }
       // At most one costume ref: additional refs dilute the primary signal.
-      c.outfitRefs.slice(0, 1).forEach(ref => {
+      if (!suppressCastImages) c.outfitRefs.slice(0, 1).forEach(ref => {
         push(`${name} costume reference:`);
         pushImage(ref);
       });
-      if (c.emblem) {
+      if (c.emblem && !suppressCastImages) {
         push(`${name}'s emblem — reproduce exactly, on ${c.emblem.placement}:`);
         pushImage(c.emblem.image);
       }
-      if (c.weapon) {
+      if (c.weapon && !suppressCastImages) {
         push(`${name}'s ${c.weapon.description}:`);
         pushImage(c.weapon.image);
       }

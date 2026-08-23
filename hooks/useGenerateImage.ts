@@ -340,11 +340,33 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
         ...additionalChars.map(c => ({ persona: c, role: (getRoleLabel(c) || 'supporting').toLowerCase() })),
       ];
 
-      // Page-scope to the cast the outline actually places on this page.
-      const onPage = roster.filter(({ persona }) =>
-        activeProfiles.length === 0 ||
-        activeProfiles.some(p => p.id === persona.id || p.name === persona.name)
-      );
+      // Page-scope the cast.
+      //
+      // beat.art.characters_present is preferred over the outline's page plan:
+      // it is derived from the scene the writer actually wrote, whereas the
+      // plan is a forecast made before the page existed. When the two disagree,
+      // a character in the scene but absent from the plan would otherwise be
+      // drawn with no reference at all — a reliable source of drift.
+      const presentKeys = beat.art?.characters_present ?? [];
+      const matchesPresent = (persona: Persona): boolean =>
+        presentKeys.some(key => {
+          if (key === 'hero') return persona.id === hero?.id;
+          if (key === 'friend') return persona.id === friend?.id;
+          const k = key.toLowerCase().trim();
+          const n = (persona.name || '').toLowerCase().trim();
+          return persona.id === key || (Boolean(n) && (n === k || n.split(' ')[0] === k.split(' ')[0]));
+        });
+
+      const onPage = presentKeys.length > 0
+        ? roster.filter(r => matchesPresent(r.persona))
+        : roster.filter(({ persona }) =>
+            activeProfiles.length === 0 ||
+            activeProfiles.some(p => p.id === persona.id || p.name === persona.name)
+          );
+
+      // Never send an empty cast: a page with no character references drifts
+      // completely. If scoping matched nobody, fall back to the full roster.
+      const scopedRoster = onPage.length > 0 ? onPage : roster;
 
       const toV2 = ({ persona, role }: { persona: Persona; role: string }): V2Character => {
         const emb = getEmblemDesc(persona);
@@ -360,6 +382,8 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
           roleLabel: role,
           referenceImage: sheet || persona.base64 || undefined,
           isModelSheet: Boolean(sheet),
+          // Paired with the sheet so facial detail survives downsampling.
+          facePortrait: sheet ? (persona.base64 || undefined) : undefined,
           outfitRefs: getAllRefs(persona),
           emblem: emb ? { image: emb.image, placement: emb.placement } : undefined,
           weapon: wpn ? { image: wpn.image, description: wpn.description } : undefined,
@@ -370,9 +394,9 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
 
       // Gemini weights later images most heavily: preserved first, focus last.
       const ordered = [
-        ...onPage.filter(r => preserveSet.has(r.persona.id)),
-        ...onPage.filter(r => !preserveSet.has(r.persona.id) && r.persona !== focusPersona),
-        ...onPage.filter(r => !preserveSet.has(r.persona.id) && r.persona === focusPersona),
+        ...scopedRoster.filter(r => preserveSet.has(r.persona.id)),
+        ...scopedRoster.filter(r => !preserveSet.has(r.persona.id) && r.persona !== focusPersona),
+        ...scopedRoster.filter(r => !preserveSet.has(r.persona.id) && r.persona === focusPersona),
       ];
 
       const sceneCtx: Array<{ base64: string; label: string }> = [];
@@ -388,7 +412,11 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
         type,
         storyContext,
         genre: selectedGenre,
-        characters: useOnlySelectedRefs ? [] : ordered.map(toV2),
+        // "Use only selected refs" swaps the pictures, not the identities:
+        // dropping the cast entirely left rerolls with no idea who they were
+        // drawing, which is the opposite of a consistency feature.
+        characters: ordered.map(toV2),
+        suppressCastImages: Boolean(useOnlySelectedRefs && extraRefImages?.length),
         sceneContext: sceneCtx.length ? sceneCtx : undefined,
         preserveImage: currentImageToPreserve,
         instruction,

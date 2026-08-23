@@ -15,7 +15,7 @@
  * can be compared side by side, which is how style mismatches become obvious.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { Persona } from '../types';
 
 export interface ModelSheetState {
@@ -31,6 +31,8 @@ interface Props {
   states: Record<string, ModelSheetState>;
   onGenerate: (personaId: string) => void;
   onClear: (personaId: string) => void;
+  /** Open a sheet full-size for inspecting or cropping individual poses. */
+  onViewSheet?: (personaId: string) => void;
   /** Generate sheets for every character that does not have a current one. */
   onGenerateAll: () => void;
 }
@@ -38,9 +40,89 @@ interface Props {
 const isCurrent = (p: Persona, artStyle: string): boolean =>
   Boolean(p.modelSheet) && p.modelSheetStyle === artStyle;
 
+/** Filesystem-safe slug for download filenames. */
+const slug = (s: string): string =>
+  (s || 'character').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
+
+/**
+ * Save a model sheet to disk at full resolution.
+ *
+ * The sheet is the reference art for the whole issue, so people reasonably
+ * want it outside the app — to drop poses into a reroll as a reference image,
+ * to hand to a human artist, or just to keep.
+ */
+const downloadSheet = (persona: Persona, artStyle: string) => {
+  if (!persona.modelSheet) return;
+  const a = document.createElement('a');
+  a.href = persona.modelSheet;
+  a.download = `${slug(persona.name)}-model-sheet-${slug(artStyle)}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+};
+
+/**
+ * Full-size viewer for a sheet.
+ *
+ * Sheets are rendered wide and shown as small thumbnails in the strip, so the
+ * individual poses are unreadable there. This is where you actually look at
+ * them — to judge whether the character is right, or to crop a pose out for
+ * use as a reroll reference.
+ */
+const SheetLightbox: React.FC<{
+  persona: Persona;
+  artStyle: string;
+  onClose: () => void;
+  onDownload: () => void;
+}> = ({ persona, artStyle, onClose, onDownload }) => {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[600] bg-black/85 flex flex-col items-center justify-center p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${persona.name || 'Character'} model sheet, full size`}
+    >
+      <img
+        src={persona.modelSheet}
+        alt={`Model sheet for ${persona.name || 'character'}`}
+        className="max-w-full max-h-[80vh] object-contain border-2 border-white"
+        onClick={e => e.stopPropagation()}
+      />
+      <div className="flex gap-2 mt-3" onClick={e => e.stopPropagation()}>
+        <button
+          onClick={onDownload}
+          className="comic-btn bg-blue-600 text-white font-comic px-4 py-2 border-[3px] border-black uppercase text-sm hover:bg-blue-500"
+        >
+          ⬇ Download PNG
+        </button>
+        <button
+          onClick={onClose}
+          className="comic-btn bg-gray-200 text-black font-comic px-4 py-2 border-[3px] border-black uppercase text-sm hover:bg-gray-300"
+        >
+          Close
+        </button>
+      </div>
+      <p className="font-ui text-xs text-gray-300 mt-2 text-center max-w-md">
+        {persona.name} · {artStyle}. Download to crop an individual pose and reuse it
+        as a reference image when rerolling a panel.
+      </p>
+    </div>
+  );
+};
+
 export const ModelSheetStrip: React.FC<Props> = ({
-  characters, artStyle, states, onGenerate, onClear, onGenerateAll,
+  characters, artStyle, states, onGenerate, onClear, onGenerateAll, onViewSheet,
 }) => {
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  const viewing = characters.find(p => p.id === viewingId && p.modelSheet) ?? null;
+
   if (characters.length === 0) return null;
 
   const missing = characters.filter(p => !isCurrent(p, artStyle));
@@ -62,6 +144,15 @@ export const ModelSheetStrip: React.FC<Props> = ({
             photo, which is what keeps faces consistent across the issue.
           </p>
         </div>
+        {characters.some(p => p.modelSheet) && (
+          <button
+            onClick={() => characters.filter(p => p.modelSheet).forEach(p => downloadSheet(p, artStyle))}
+            className="comic-btn shrink-0 bg-blue-600 text-white font-comic px-3 py-1.5 border-[3px] border-black uppercase text-xs hover:bg-blue-500"
+            title="Download every generated model sheet"
+          >
+            ⬇ All
+          </button>
+        )}
         {missing.length > 0 && (
           <button
             onClick={onGenerateAll}
@@ -88,11 +179,19 @@ export const ModelSheetStrip: React.FC<Props> = ({
                       Drawing sheet…
                     </span>
                   ) : p.modelSheet ? (
-                    <img
-                      src={p.modelSheet}
-                      alt={`Model sheet for ${p.name || 'character'}: front, three-quarter, and profile views with expression studies`}
-                      className="w-full h-full object-contain"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => (onViewSheet ? onViewSheet(p.id) : setViewingId(p.id))}
+                      className="w-full h-full cursor-zoom-in"
+                      title="View full size"
+                      aria-label={`View ${p.name || 'character'} model sheet full size`}
+                    >
+                      <img
+                        src={p.modelSheet}
+                        alt={`Model sheet for ${p.name || 'character'}: front, three-quarter, and profile views with expression studies`}
+                        className="w-full h-full object-contain"
+                      />
+                    </button>
                   ) : (
                     <span className="font-ui text-xs text-gray-500 px-2 text-center">
                       No sheet yet — pages will use the raw portrait
@@ -123,6 +222,17 @@ export const ModelSheetStrip: React.FC<Props> = ({
                     </button>
                     {p.modelSheet && (
                       <button
+                        onClick={() => downloadSheet(p, artStyle)}
+                        disabled={state.isGenerating}
+                        title="Download this model sheet"
+                        aria-label={`Download ${p.name || 'character'} model sheet`}
+                        className="comic-btn bg-blue-600 text-white font-comic px-2 py-1 border-2 border-black uppercase text-[11px] hover:bg-blue-500 disabled:opacity-50"
+                      >
+                        ⬇
+                      </button>
+                    )}
+                    {p.modelSheet && (
+                      <button
                         onClick={() => onClear(p.id)}
                         disabled={state.isGenerating}
                         aria-label={`Remove model sheet for ${p.name || 'character'}`}
@@ -138,6 +248,15 @@ export const ModelSheetStrip: React.FC<Props> = ({
           );
         })}
       </ul>
+
+      {viewing && (
+        <SheetLightbox
+          persona={viewing}
+          artStyle={artStyle}
+          onClose={() => setViewingId(null)}
+          onDownload={() => downloadSheet(viewing, artStyle)}
+        />
+      )}
     </section>
   );
 };

@@ -884,7 +884,15 @@ const App: React.FC = () => {
       }
   };
 
-  const generateSinglePage = async (faceId: string, pageNum: number, type: ComicFace['type'], instruction?: string, extraRefImages?: string[], previousChoices?: string[], comicOverrides?: ComicOverrides, useOnlySelectedRefs?: boolean, currentImageToPreserve?: string, adjacentPageImages?: Array<{ base64: string; label: string }>, consistencyMode?: boolean, profileOverrides?: CharacterProfile[], preserveCharacterIds?: string[]) => {
+  /**
+   * @param instructionScope Who the instruction is for. 'both' (default) sends it
+   *   to the writer and the artist, which is right for reroll directions like
+   *   "make it rain harder". 'writer' keeps it out of the image prompt — narrative
+   *   guidance such as "bring the thread to a satisfying conclusion" is not
+   *   something an image model can act on, and it gets rendered as literal text
+   *   on the page instead.
+   */
+  const generateSinglePage = async (faceId: string, pageNum: number, type: ComicFace['type'], instruction?: string, extraRefImages?: string[], previousChoices?: string[], comicOverrides?: ComicOverrides, useOnlySelectedRefs?: boolean, currentImageToPreserve?: string, adjacentPageImages?: Array<{ base64: string; label: string }>, consistencyMode?: boolean, profileOverrides?: CharacterProfile[], preserveCharacterIds?: string[], instructionScope: 'both' | 'writer' = 'both') => {
       // Use ref (not state) — this async function can be called from generateBatch or handleChoice
       // where the React state closure may be stale from the render that created the caller.
       const isNovelMode = !generateFromOutlineRef.current;
@@ -944,7 +952,8 @@ const App: React.FC = () => {
           }
       }
 
-      const result = await generateImage(beat, type, instruction, extraRefImages, prevImage, prevBeat, pageNum, comicOverrides, useOnlySelectedRefs, currentImageToPreserve, adjacentPageImages, consistencyMode, profileOverrides, preserveCharacterIds);
+      const artInstruction = instructionScope === 'writer' ? undefined : instruction;
+      const result = await generateImage(beat, type, artInstruction, extraRefImages, prevImage, prevBeat, pageNum, comicOverrides, useOnlySelectedRefs, currentImageToPreserve, adjacentPageImages, consistencyMode, profileOverrides, preserveCharacterIds);
       if (isStoppedRef.current) return;
       if (!result.imageUrl) {
           updateFaceState(faceId, { isLoading: false, hasFailed: true, originalPrompt: result.originalPrompt, failureReason: result.failureReason });
@@ -1623,8 +1632,7 @@ const App: React.FC = () => {
           .join(', ');
 
       return `
-[WRAP-UP PAGE - FINAL PAGE OF STORY]
-This is the FINAL PAGE. The user has chosen to end the story here.
+This is the FINAL PAGE of the story. The user has chosen to end it here.
 
 INSTRUCTIONS:
 1. Bring the current narrative thread to a SATISFYING CONCLUSION
@@ -1665,7 +1673,8 @@ Create a powerful, memorable conclusion that honors the user's story path.
       generatingPages.current.add(wrapUpPage);
 
       try {
-          await generateSinglePage(faceId, wrapUpPage, 'story', getWrapUpInstruction());
+          // Writer-scoped: this is narrative direction, not art direction.
+          await generateSinglePage(faceId, wrapUpPage, 'story', getWrapUpInstruction(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'writer');
       } catch (e) {
           console.error('[handleStopHere] Wrap-up page generation failed:', e);
           updateFaceState(faceId, { isLoading: false, hasFailed: true });
@@ -1737,7 +1746,7 @@ Create a powerful, memorable conclusion that honors the user's story path.
       getAdditionalChars().forEach(c => collectRefs(c));
 
       // Build enhanced instruction with page context
-      let enhancedInstruction = `[RETRY WITH ENHANCED CONTEXT] This is a retry for page ${pageIndex}.`;
+      let enhancedInstruction = `This is a retry for page ${pageIndex}.`;
 
       // Add outline context if available
       if (storyOutline.content && generateFromOutline) {
@@ -1813,11 +1822,11 @@ Create a powerful, memorable conclusion that honors the user's story path.
       let finalInstruction = instruction || '';
       const modeInstructions: Record<RegenerationMode, string> = {
           'full': '',
-          'characters_only': '[CHARACTERS ONLY - PRESERVE SCENE] Study the CURRENT PANEL IMAGE below. Keep the EXACT same background, environment, lighting, and scene composition. ONLY regenerate the character(s) with improved consistency to their reference images. The background MUST remain identical.',
-          'expression_only': '[EXPRESSION ONLY - PRESERVE EVERYTHING] Study the CURRENT PANEL IMAGE below. Keep EVERYTHING exactly the same (pose, clothing, background, lighting). ONLY change the facial expression of the character(s).',
-          'outfit_only': '[OUTFIT ONLY - PRESERVE SCENE] Study the CURRENT PANEL IMAGE below. Keep the face, pose, background, and lighting exactly the same. ONLY change the clothing/outfit of the character(s).',
-          'emblem_only': '[EMBLEM ONLY - PRESERVE SCENE] Study the CURRENT PANEL IMAGE below. Keep everything exactly the same EXCEPT the emblem/logo. Reproduce the EMBLEM/LOGO reference EXACTLY - same shape, colors, proportions, and placement.',
-          'weapon_only': '[WEAPON ONLY - PRESERVE SCENE] Study the CURRENT PANEL IMAGE below. Keep everything exactly the same EXCEPT the weapon. Reproduce the WEAPON reference EXACTLY - same design, shape, details, and style.'
+          'characters_only': 'Redraw only the characters, matching their cast references more closely. Keep the background, environment, lighting, and composition of the existing panel identical.',
+          'expression_only': 'Change only the facial expressions. Keep pose, clothing, background, and lighting identical to the existing panel.',
+          'outfit_only': 'Change only the clothing. Keep faces, pose, background, and lighting identical to the existing panel.',
+          'emblem_only': 'Change only the emblem, reproducing the emblem reference exactly — same shape, colours, proportions, and placement. Everything else stays identical to the existing panel.',
+          'weapon_only': 'Change only the weapon, reproducing the weapon reference exactly — same design, shape, and details. Everything else stays identical to the existing panel.'
       };
 
       // BATCH 1.4.1: Pass current image for non-full modes to help preserve scene
@@ -1837,12 +1846,14 @@ Create a powerful, memorable conclusion that honors the user's story path.
 
       // Add negative prompt if provided - explicitly tell AI what NOT to include
       if (negativePrompt) {
-          finalInstruction += ` [IMPORTANT - DO NOT INCLUDE THE FOLLOWING: ${negativePrompt}. These elements must NOT appear in the generated image.]`;
+          finalInstruction += ` Do not include: ${negativePrompt}.`;
       }
 
-      // Add reference image reinforcement if enabled
+      // Reference reinforcement. Deliberately one short sentence: the prompt's
+      // RULES block already states that costumes and faces must match their
+      // references, and restating it in caps only competes with that.
       if (reinforceWithReferenceImages && selectedRefImages.length > 0) {
-          finalInstruction += ` [CRITICAL REFERENCE IMAGE DIRECTIVE] You MUST carefully study ALL ${selectedRefImages.length} selected reference images. Match character appearances, costumes, accessories, emblems, and weapons EXACTLY as shown in these references. The reference images are your PRIMARY source of truth for visual consistency - copy every visible detail precisely.`;
+          finalInstruction += ` Treat the supplied reference images as the source of truth for appearance.`;
       }
 
       // Build comic fundamentals overrides object

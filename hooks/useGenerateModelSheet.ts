@@ -73,6 +73,11 @@ export const useGenerateModelSheet = (config: GenerateModelSheetConfig) => {
     const { persona, artStyle, profile, instruction } = params;
     const startTime = Date.now();
     const { imageResolution = '1k' } = useSettingsStore.getState();
+    // A 16:9 sheet carries three full-body views plus expression studies, so at
+    // 1K each individual face lands on very few pixels — which then propagates
+    // to every page that uses the sheet as its face reference. This is a
+    // once-per-character cost, so never render it below 2K.
+    const sheetResolution = imageResolution === '4k' ? '4K' : '2K';
 
     const name = persona.name || 'the character';
     const contents: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
@@ -166,7 +171,7 @@ export const useGenerateModelSheet = (config: GenerateModelSheetConfig) => {
             imageConfig: {
               // Model sheets are wide by nature — several figures side by side.
               aspectRatio: '16:9',
-              imageSize: imageResolution.toUpperCase(),
+              imageSize: sheetResolution,
             },
           },
         }),
