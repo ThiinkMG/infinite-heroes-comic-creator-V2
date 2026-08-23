@@ -29,24 +29,15 @@ export type { UndoRedoButtonsProps } from './UndoRedoButtons';
 export { OutlinePageCard } from './OutlinePageCard';
 export type { OutlinePageCardProps, OutlinePageType } from './OutlinePageCard';
 export { LAYOUT_ICONS, SHOT_ICONS, BEAT_COLORS, PACING_INDICATORS, getPageType } from './OutlinePageCard';
-export { OutlinePageGrid } from './OutlinePageGrid';
-export type { OutlinePageGridProps, GridViewMode, GridSortOption, GridFilterOptions } from './OutlinePageGrid';
-export { CharacterTimeline } from './CharacterTimeline';
-export type { CharacterTimelineProps } from './CharacterTimeline';
-export { AIFillGapsButton } from './AIFillGapsButton';
 
 // Auto-save indicator
-export { AutoSaveIndicator } from './AutoSaveIndicator';
-export type { AutoSaveIndicatorProps, IndicatorPosition } from './AutoSaveIndicator';
 
 // Cover variant selector
 export { CoverVariantSelector } from './CoverVariantSelector';
 export type { CoverVariantSelectorProps, CoverVariant } from './CoverVariantSelector';
 
 // Analytics & Cost tracking
-export { MetricsDashboard } from './MetricsDashboard';
 export { CostEstimator, CostEstimatorCompact } from './CostEstimator';
-export { ApiUsageWarning, CostWarningBanner, ErrorRateWarningBanner } from './ApiUsageWarning';
 
 // Toast notifications
 export { ToastNotification, ToastContainer } from './ToastNotification';
@@ -57,16 +48,10 @@ export { CharacterLibraryModal } from './CharacterLibraryModal';
 export type { CharacterLibraryModalProps } from './CharacterLibraryModal';
 
 // Example comics gallery
-export { ExampleComicsGallery } from './ExampleComicsGallery';
-export type { ExampleComicsGalleryProps } from './ExampleComicsGallery';
 
 // Tutorial overlay
-export { TutorialOverlay } from './TutorialOverlay';
-export type { TutorialOverlayProps } from './TutorialOverlay';
 
 // Quick Start wizard
-export { QuickStartWizard } from './QuickStartWizard';
-export type { QuickStartWizardProps, QuickStartConfig } from './QuickStartWizard';
 
 // SFX components
 export { SFXOverlay, useSFXElements } from './SFXOverlay';
@@ -79,20 +64,9 @@ export { BubbleOverlay, useSpeechBubbles, BubblePresets } from './BubbleOverlay'
 export type { default as BubbleOverlayComponent } from './BubbleOverlay';
 
 // Caption components
-export { CaptionOverlay, useCaptionBoxes, CaptionPresets, useCharacterCaptionColors } from './CaptionOverlay';
-export type { default as CaptionOverlayComponent } from './CaptionOverlay';
 
 // Relationship mapper
-export { RelationshipMapper, formatRelationshipsForPrompt, getCharacterRelationshipSummary } from './RelationshipMapper';
-export type {
-  RelationshipMapperProps,
-  RelationshipType,
-  CharacterRelationship,
-  RelationshipCharacter
-} from './RelationshipMapper';
 
 // Character analysis panel
-export { CharacterAnalysisPanel } from './CharacterAnalysisPanel';
 
 // Preset manager
-export { PresetManager } from './PresetManager';
