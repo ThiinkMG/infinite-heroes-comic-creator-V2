@@ -83,6 +83,8 @@ function useIsPortraitMobile(): boolean {
 interface BookProps {
     /** Reports page-generation progress so the shell can display it. */
     onProgressChange?: (p: { isGenerating: boolean; done: number; total: number }) => void;
+    /** Reports whether the spread/single toggle applies, and how to invoke it. */
+    onViewModeAvailable?: (v: { canToggle: boolean; mode: 'spread' | 'single'; toggle: () => void }) => void;
     comicFaces: ComicFace[];
     currentSheetIndex: number;
     /** Current single-page index for single-page mode (optional - will be calculated from sheetIndex if not provided) */
@@ -196,6 +198,20 @@ export const Book: React.FC<BookProps> = (props) => {
     const currentSinglePage = props.currentPageIndex ?? singlePageIndex;
 
     // Handle view mode toggle
+    // Report view state upward so the shell can render the control.
+    useEffect(() => {
+        props.onViewModeAvailable?.({
+            canToggle: !props.isSetupVisible && !isPortraitMobile && props.currentSheetIndex > 0,
+            mode: effectiveViewMode,
+            toggle: () => {
+                const newMode = viewMode === 'spread' ? 'single' : 'spread';
+                setInternalViewMode(newMode);
+                try { localStorage.setItem(VIEW_MODE_PREFERENCE_KEY, newMode); } catch { /* private mode */ }
+                props.onViewModeChange?.(newMode);
+            },
+        });
+    }, [props.isSetupVisible, isPortraitMobile, props.currentSheetIndex, effectiveViewMode, viewMode]);
+
     const toggleViewMode = useCallback(() => {
         const newMode = viewMode === 'spread' ? 'single' : 'spread';
         setInternalViewMode(newMode);
@@ -555,17 +571,16 @@ export const Book: React.FC<BookProps> = (props) => {
                 }}
                 {...swipeHandlers}
             >
-                {/* View mode toggle (only show when book is open and not in portrait) */}
-                {!props.isSetupVisible && !isPortraitMobile && props.currentSheetIndex > 0 && (
-                    <button
-                        onClick={toggleViewMode}
-                        className="absolute -top-10 right-0 z-40 bg-black/70 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-black/90 transition-colors"
-                        title="Switch to single-page view (V)"
-                        aria-label="Switch to single-page view"
-                    >
-                        Single Page
-                    </button>
-                )}
+                {/*
+                  The view-mode toggle used to sit here at `absolute -top-10 right-0
+                  z-40`, the mirror of the generation indicator's bug: the book is
+                  centred and transformed, so it landed underneath the reader's
+                  navigation at z-[100] and read as a stray label pinned to the
+                  Save Comic button.
+
+                  It now lives with the other reader controls in the app shell,
+                  where nothing can cover it.
+                */}
 
                 {/*
                   The generation indicator used to live here, at `absolute -top-10

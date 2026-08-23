@@ -540,6 +540,8 @@ const App: React.FC = () => {
    * top navigation on ordinary viewports and became invisible.
    */
   const [readerProgress, setReaderProgress] = useState<{ isGenerating: boolean; done: number; total: number } | null>(null);
+  /** Spread/single page toggle, surfaced by the reader. */
+  const [viewToggle, setViewToggle] = useState<{ canToggle: boolean; mode: 'spread' | 'single'; toggle: () => void } | null>(null);
   /** Casting-step props, shared by the setup screen and the profiles dialog. */
   const modelSheetProps = {
       characters: [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[],
@@ -3817,6 +3819,18 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
                       </div>
                   </div>
               )}
+              {/* Spread/single toggle. Lives here rather than pinned to the book,
+                  which is centred and transformed and pushed it under the nav. */}
+              {viewToggle?.canToggle && (
+                  <button
+                      onClick={viewToggle.toggle}
+                      className="comic-btn text-xs bg-white text-black px-3 py-1 font-comic tracking-widest border-[2px] border-black shadow-[2px_2px_0_rgba(0,0,0,1)] hover:bg-gray-100 self-end"
+                      title={`Switch to ${viewToggle.mode === 'spread' ? 'single-page' : 'two-page'} view (V)`}
+                  >
+                      {viewToggle.mode === 'spread' ? 'SINGLE PAGE' : 'TWO PAGES'}
+                  </button>
+              )}
+
               {/* Fix lettering by hand rather than rerolling the whole page. */}
               <button
                   onClick={() => openLetteringEditor('bubbles')}
@@ -3865,6 +3879,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', transition: zoom === 1 ? 'transform 0.2s ease-out' : 'none', minWidth: 'max-content', minHeight: 'max-content', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Book 
           onProgressChange={setReaderProgress}
+          onViewModeAvailable={setViewToggle}
           comicFaces={comicFaces}
           currentSheetIndex={currentSheetIndex}
           isStarted={isStarted}
