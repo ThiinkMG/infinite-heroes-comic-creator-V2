@@ -12,14 +12,14 @@ import { getComicConfig, ART_STYLES, GENRES, TONES, LANGUAGES, ComicFace, Beat, 
 import { COMIC_PRESETS, ComicPreset } from './data/comicPresets';
 import { Setup } from './Setup';
 import { Book } from './Book';
-import { RerollModal } from './RerollModal';
+
 import { OutlineDialog } from './OutlineDialog';
-import { GalleryModal } from './GalleryModal';
+
 import { useApiKey } from './useApiKey';
 import { ApiKeyDialog } from './ApiKeyDialog';
 import { ExportDialog, ExportOptions, PAGE_SIZES, RESOLUTION_OPTIONS } from './ExportDialog';
 import { ProfilesDialog } from './ProfilesDialog';
-import { SettingsDialog } from './SettingsDialog';
+
 import { OutlineStepDialog } from './OutlineStepDialog';
 import { ModeSelectionScreen } from './ModeSelectionScreen';
 import { CoverVariantSelector } from './components';
@@ -32,11 +32,11 @@ import { useSettingsStore } from './stores/useSettingsStore';
 import { useSessionHistoryStore } from './stores/useSessionHistoryStore';
 
 // --- Feature imports ---
-import { GlobalGalleryModal } from './components/GlobalGalleryModal';
+
 import { SingleImageMode, SingleImageGenerateParams } from './SingleImageMode';
 import { galleryAdd, GalleryImage } from './hooks/useGalleryDB';
 import { TutorialModal } from './components/TutorialModal';
-import { TutorialPage } from './components/TutorialPage';
+
 
 // --- Generation Hooks ---
 import { useGenerateBeat } from './hooks/useGenerateBeat';
@@ -58,9 +58,9 @@ import type { ModelSheetState } from './components/ModelSheetStrip';
 import { ScriptReader } from './components/ScriptReader';
 import { useConfirm } from './components/ConfirmDialog';
 import { useToast } from './contexts/ToastContext';
-import { BubbleEditor } from './components/BubbleEditor';
-import { SFXEditor } from './components/SFXEditor';
-import { CharacterLibraryModal } from './components/CharacterLibraryModal';
+
+
+
 import type { SpeechBubble, PlacedSFX } from './types';
 import { createImageQueue } from './utils/requestQueue';
 import { useExportImport } from './hooks/useExportImport';
@@ -69,6 +69,32 @@ import { buildAllCharacterReferences } from './utils/buildCharacterReference';
 // --- Feature G: Visual Drift Detection ---
 import { checkVisualDrift } from './utils/visualDriftDetector';
 import { DriftWarningToast } from './components/DriftWarningToast';
+
+/*
+ * Modals are loaded on demand.
+ *
+ * Each is only reachable behind a visibility flag, but all of them were bundled
+ * into the initial chunk — so first paint paid for a speech-bubble editor, an SFX
+ * placement tool, and two galleries that most sessions never open.
+ *
+ * React.lazy needs a default export; these components are named exports, so each
+ * import is mapped to one.
+ */
+const RerollModal = React.lazy(() => import('./RerollModal').then(m => ({ default: m.RerollModal })));
+const GalleryModal = React.lazy(() => import('./GalleryModal').then(m => ({ default: m.GalleryModal })));
+const SettingsDialog = React.lazy(() => import('./SettingsDialog').then(m => ({ default: m.SettingsDialog })));
+const GlobalGalleryModal = React.lazy(() => import('./components/GlobalGalleryModal').then(m => ({ default: m.GlobalGalleryModal })));
+const TutorialPage = React.lazy(() => import('./components/TutorialPage').then(m => ({ default: m.TutorialPage })));
+const BubbleEditor = React.lazy(() => import('./components/BubbleEditor').then(m => ({ default: m.BubbleEditor })));
+const SFXEditor = React.lazy(() => import('./components/SFXEditor').then(m => ({ default: m.SFXEditor })));
+const CharacterLibraryModal = React.lazy(() => import('./components/CharacterLibraryModal').then(m => ({ default: m.CharacterLibraryModal })));
+
+/** Shown while a lazily-loaded modal arrives. */
+const ModalFallback: React.FC = () => (
+  <div className="fixed inset-0 z-[800] flex items-center justify-center bg-black/60">
+    <p className="font-comic text-white text-lg uppercase tracking-widest">Loading…</p>
+  </div>
+);
 
 // --- Constants ---
 const MODEL_IMAGE_GEN_NAME = "gemini-3-pro-image-preview";
@@ -1112,15 +1138,52 @@ const App: React.FC = () => {
       }
   };
 
+  /** Everything one page render needs. */
+  interface GeneratePageOptions {
+      faceId: string;
+      pageNum: number;
+      type: ComicFace['type'];
+      instruction?: string;
+      extraRefImages?: string[];
+      previousChoices?: string[];
+      comicOverrides?: ComicOverrides;
+      /** Suppress the cast's own images in favour of `extraRefImages`. */
+      useOnlySelectedRefs?: boolean;
+      currentImageToPreserve?: string;
+      adjacentPageImages?: Array<{ base64: string; label: string }>;
+      consistencyMode?: boolean;
+      profileOverrides?: CharacterProfile[];
+      preserveCharacterIds?: string[];
+      /**
+       * Who the instruction is for. 'both' (default) sends it to the writer and
+       * the artist, which is right for reroll directions like "make it rain
+       * harder". 'writer' keeps it out of the image prompt — narrative guidance
+       * such as "bring the thread to a satisfying conclusion" is not something an
+       * image model can act on, and it gets rendered as literal text on the page.
+       */
+      instructionScope?: 'both' | 'writer';
+      /**
+       * Reuse this beat instead of writing a new one. Supplied by rerolls so
+       * redrawing a page does not rewrite its dialogue.
+       */
+      existingBeat?: Beat;
+  }
+
   /**
-   * @param instructionScope Who the instruction is for. 'both' (default) sends it
-   *   to the writer and the artist, which is right for reroll directions like
-   *   "make it rain harder". 'writer' keeps it out of the image prompt — narrative
-   *   guidance such as "bring the thread to a satisfying conclusion" is not
-   *   something an image model can act on, and it gets rendered as literal text
-   *   on the page instead.
+   * Render one page.
+   *
+   * Takes an options object rather than positional arguments: this had grown to
+   * fifteen parameters across ten call sites, most of them `undefined`
+   * placeholders, which made every call unreadable and the next addition a
+   * likely source of silent mis-ordering.
    */
-  const generateSinglePage = async (faceId: string, pageNum: number, type: ComicFace['type'], instruction?: string, extraRefImages?: string[], previousChoices?: string[], comicOverrides?: ComicOverrides, useOnlySelectedRefs?: boolean, currentImageToPreserve?: string, adjacentPageImages?: Array<{ base64: string; label: string }>, consistencyMode?: boolean, profileOverrides?: CharacterProfile[], preserveCharacterIds?: string[], instructionScope: 'both' | 'writer' = 'both', existingBeat?: Beat) => {
+  const generateSinglePage = async (opts: GeneratePageOptions) => {
+      const {
+          faceId, pageNum, type, instruction, extraRefImages, previousChoices,
+          comicOverrides, useOnlySelectedRefs, currentImageToPreserve,
+          adjacentPageImages, consistencyMode, profileOverrides,
+          preserveCharacterIds, instructionScope = 'both', existingBeat,
+      } = opts;
       // Use ref (not state) — this async function can be called from generateBatch or handleChoice
       // where the React state closure may be stale from the render that created the caller.
       const isNovelMode = !generateFromOutlineRef.current;
@@ -1413,7 +1476,7 @@ const App: React.FC = () => {
                   // Transient 429s and 5xxs previously killed a page outright; the
                   // backoff helper existed in utils/ but was never imported.
                   await retryWithBackoff(
-                      () => generateSinglePage(`page-${pageNum}`, pageNum, pageNum === config.BACK_COVER_PAGE ? 'back_cover' : 'story'),
+                      () => generateSinglePage({ faceId: `page-${pageNum}`, pageNum, type: pageNum === config.BACK_COVER_PAGE ? 'back_cover' : 'story' }),
                       {
                           maxAttempts: 3,
                           onRetry: (attempt, _err, delayMs) =>
@@ -1733,7 +1796,7 @@ const App: React.FC = () => {
 
     if (!suppliedCover) {
       generatingPages.current.add(0);
-      generateSinglePage('cover', 0, 'cover').finally(() => generatingPages.current.delete(0));
+      generateSinglePage({ faceId: 'cover', pageNum: 0, type: 'cover' }).finally(() => generatingPages.current.delete(0));
     } else {
       console.log('[cover] using the supplied cover; skipping generation');
     }
@@ -1901,7 +1964,7 @@ const App: React.FC = () => {
                   const faceId = `page-${pageNum}`;
                   const type: ComicFace['type'] = pageNum === config.BACK_COVER_PAGE ? 'back_cover' : 'story';
                   const instruction = i === 0 ? `User chose: "${choice}". Continue the story based on this choice.` : undefined;
-                  await generateSinglePage(faceId, pageNum, type, instruction);
+                  await generateSinglePage({ faceId, pageNum, type, instruction });
                   generatingPages.current.delete(pageNum);
 
                   // Cache choices for reroll preservation
@@ -1972,7 +2035,7 @@ Create a powerful, memorable conclusion that honors the user's story path.
 
       try {
           // Writer-scoped: this is narrative direction, not art direction.
-          await generateSinglePage(faceId, wrapUpPage, 'story', getWrapUpInstruction(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'writer');
+          await generateSinglePage({ faceId, pageNum: wrapUpPage, type: 'story', instruction: getWrapUpInstruction(), instructionScope: 'writer' });
       } catch (e) {
           console.error('[handleStopHere] Wrap-up page generation failed:', e);
           updateFaceState(faceId, { isLoading: false, hasFailed: true });
@@ -2005,7 +2068,7 @@ Create a powerful, memorable conclusion that honors the user's story path.
       generatingPages.current.add(backCoverPage);
 
       try {
-          await generateSinglePage(backCoverId, backCoverPage, 'back_cover');
+          await generateSinglePage({ faceId: backCoverId, pageNum: backCoverPage, type: 'back_cover' });
       } catch (e) {
           console.error('[handleStopHere] Back cover generation failed:', e);
           updateFaceState(backCoverId, { isLoading: false, hasFailed: true });
@@ -2078,12 +2141,14 @@ Create a powerful, memorable conclusion that honors the user's story path.
           // the beat, so a retry could return art with no speech bubbles at all —
           // the same defect fixed for the reroll modal in the previous session.
           const retryFace = historyRef.current.find(fc => fc.id === faceId);
-          await generateSinglePage(
-              faceId, pageIndex, type, enhancedInstruction,
-              enhancedRefImages.length > 0 ? enhancedRefImages : undefined,
-              undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-              'both', retryFace?.narrative,
-          );
+          await generateSinglePage({
+              faceId,
+              pageNum: pageIndex,
+              type,
+              instruction: enhancedInstruction,
+              extraRefImages: enhancedRefImages.length > 0 ? enhancedRefImages : undefined,
+              existingBeat: retryFace?.narrative,
+          });
       } catch (e) {
           console.error('Quick retry failed:', e);
           updateFaceState(faceId, { isLoading: false, hasFailed: true });
@@ -2201,7 +2266,22 @@ Create a powerful, memorable conclusion that honors the user's story path.
           rerollAdjacentImages.push({ base64, label: `NEXT PAGE (page ${pageIndex + 1})` });
       }
 
-      generateSinglePage(faceId, pageIndex, type, finalInstruction || undefined, selectedRefImages.length > 0 ? selectedRefImages : undefined, allPreviousChoices.length > 0 ? allPreviousChoices : undefined, comicOverrides, useSelectedRefsOnly && selectedRefImages.length > 0, currentImage, rerollAdjacentImages.length > 0 ? rerollAdjacentImages : undefined, consistencyMode, profileOverrides.length > 0 ? profileOverrides : undefined, hasPreserveMode ? preserveCharacterIds : undefined, 'both', regenerateNarrative ? undefined : currentFace?.narrative)
+      generateSinglePage({
+          faceId,
+          pageNum: pageIndex,
+          type,
+          instruction: finalInstruction || undefined,
+          extraRefImages: selectedRefImages.length > 0 ? selectedRefImages : undefined,
+          previousChoices: allPreviousChoices.length > 0 ? allPreviousChoices : undefined,
+          comicOverrides,
+          useOnlySelectedRefs: useSelectedRefsOnly && selectedRefImages.length > 0,
+          currentImageToPreserve: currentImage,
+          adjacentPageImages: rerollAdjacentImages.length > 0 ? rerollAdjacentImages : undefined,
+          consistencyMode,
+          profileOverrides: profileOverrides.length > 0 ? profileOverrides : undefined,
+          preserveCharacterIds: hasPreserveMode ? preserveCharacterIds : undefined,
+          existingBeat: regenerateNarrative ? undefined : currentFace?.narrative,
+      })
           .then(() => {
               // Restore preserved choices in Novel Mode after image regeneration
               if (preservedChoices && preservedChoices.length > 0 && isNovelMode) {
@@ -2258,10 +2338,10 @@ Create a powerful, memorable conclusion that honors the user's story path.
       historyRef.current.push(newBackCover);
       
       generatingPages.current.add(oldConfig.BACK_COVER_PAGE);
-      generateSinglePage(oldBackCoverId, oldConfig.BACK_COVER_PAGE, 'story', instruction).finally(() => {
+      generateSinglePage({ faceId: oldBackCoverId, pageNum: oldConfig.BACK_COVER_PAGE, type: 'story', instruction }).finally(() => {
           generatingPages.current.delete(oldConfig.BACK_COVER_PAGE);
           generatingPages.current.add(newConfig.BACK_COVER_PAGE);
-          generateSinglePage(`page-${newConfig.BACK_COVER_PAGE}`, newConfig.BACK_COVER_PAGE, 'back_cover').finally(() => {
+          generateSinglePage({ faceId: `page-${newConfig.BACK_COVER_PAGE}`, pageNum: newConfig.BACK_COVER_PAGE, type: 'back_cover' }).finally(() => {
               generatingPages.current.delete(newConfig.BACK_COVER_PAGE);
           });
       });
@@ -3357,6 +3437,9 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
   const showKeyAlert = !dismissedKeyAlert && (!hasGeminiKey || !hasClaudeKey);
 
   return (
+    // Suspense boundary for the lazily-loaded modals below. Without it React
+    // throws the moment one of them first suspends.
+    <React.Suspense fallback={<ModalFallback />}>
     <div className="comic-scene">
       {showApiKeyDialog && <ApiKeyDialog onContinue={handleApiKeyDialogContinue} />}
 
@@ -3995,7 +4078,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
                 const config = getComicConfig(storyContext.pageLength, extraPages, isNovelMode);
                 const type: ComicFace['type'] = face.pageIndex === 0 ? 'cover' : (face.pageIndex === config.BACK_COVER_PAGE ? 'back_cover' : 'story');
 
-                await generateSinglePage(faceId, face.pageIndex ?? 0, type);
+                await generateSinglePage({ faceId, pageNum: face.pageIndex ?? 0, type });
                 console.log('[BatchRegenerate] Completed:', faceId);
               } catch (e) {
                 console.error('[BatchRegenerate] Failed:', faceId, e);
@@ -4021,6 +4104,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
 
       <DriftWarningToast onReroll={(pageIndex) => handleReroll(pageIndex)} />
     </div>
+    </React.Suspense>
   );
 };
 
