@@ -269,8 +269,14 @@ export interface Persona {
   modelSheet?: string;
   /** Art style the model sheet was rendered in. Stale sheets are regenerated. */
   modelSheetStyle?: string;
-  /** When the model sheet was generated. */
+  /** When the model sheet was generated or uploaded. */
   modelSheetAt?: number;
+  /**
+   * Where the sheet came from. Uploaded sheets are the user's own artwork, so
+   * the UI must not imply they were AI-generated, and a reroll would destroy
+   * something the app cannot recreate.
+   */
+  modelSheetSource?: 'generated' | 'uploaded';
 }
 
 export interface StoryContext {

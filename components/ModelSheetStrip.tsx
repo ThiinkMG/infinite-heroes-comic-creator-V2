@@ -15,7 +15,7 @@
  * can be compared side by side, which is how style mismatches become obvious.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { Persona } from '../types';
 
 export interface ModelSheetState {
@@ -33,6 +33,8 @@ interface Props {
   onClear: (personaId: string) => void;
   /** Open a sheet full-size for inspecting or cropping individual poses. */
   onViewSheet?: (personaId: string) => void;
+  /** Use an image the user already has as the canonical sheet. */
+  onUpload?: (personaId: string, file: File) => void;
   /** Generate sheets for every character that does not have a current one. */
   onGenerateAll: () => void;
 }
@@ -118,9 +120,11 @@ const SheetLightbox: React.FC<{
 };
 
 export const ModelSheetStrip: React.FC<Props> = ({
-  characters, artStyle, states, onGenerate, onClear, onGenerateAll, onViewSheet,
+  characters, artStyle, states, onGenerate, onClear, onGenerateAll, onViewSheet, onUpload,
 }) => {
   const [viewingId, setViewingId] = useState<string | null>(null);
+  // One input per character, so the file picker knows which card it belongs to.
+  const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
   const viewing = characters.find(p => p.id === viewingId && p.modelSheet) ?? null;
 
   if (characters.length === 0) return null;
@@ -141,16 +145,18 @@ export const ModelSheetStrip: React.FC<Props> = ({
           <p className="font-ui text-xs text-gray-700 max-w-prose">
             A model sheet redraws your character in <strong>{artStyle}</strong> from several
             angles, once. Every page then copies that sheet instead of re-interpreting your
-            photo, which is what keeps faces consistent across the issue.
+            photo, which is what keeps faces consistent across the issue. Already have
+            character art? Upload it instead — your own artwork is a better reference
+            than anything generated from a photo.
           </p>
         </div>
         {characters.some(p => p.modelSheet) && (
           <button
             onClick={() => characters.filter(p => p.modelSheet).forEach(p => downloadSheet(p, artStyle))}
             className="comic-btn shrink-0 bg-blue-600 text-white font-comic px-3 py-1.5 border-[3px] border-black uppercase text-xs hover:bg-blue-500"
-            title="Download every generated model sheet"
+            title="Download every model sheet"
           >
-            ⬇ All
+            Save All
           </button>
         )}
         {missing.length > 0 && (
@@ -194,10 +200,16 @@ export const ModelSheetStrip: React.FC<Props> = ({
                     </button>
                   ) : (
                     <span className="font-ui text-xs text-gray-500 px-2 text-center">
-                      No sheet yet — pages will use the raw portrait
+                      No sheet yet — generate one, upload your own, or pages will
+                      use the raw portrait
                     </span>
                   )}
 
+                  {p.modelSheetSource === 'uploaded' && !state.isGenerating && (
+                    <span className="absolute top-1 right-1 bg-green-500 border border-black font-ui text-[10px] px-1 text-white">
+                      Yours
+                    </span>
+                  )}
                   {stale && !state.isGenerating && (
                     <span className="absolute top-1 left-1 bg-amber-400 border border-black font-ui text-[10px] px-1">
                       {p.modelSheetStyle ? `${p.modelSheetStyle} sheet` : 'Different style'}
@@ -214,12 +226,45 @@ export const ModelSheetStrip: React.FC<Props> = ({
                   )}
                   <div className="flex gap-1">
                     <button
-                      onClick={() => onGenerate(p.id)}
+                      onClick={() => {
+                        // Regenerating over uploaded artwork is destructive and
+                        // unrecoverable, so make the user mean it.
+                        if (p.modelSheetSource === 'uploaded' &&
+                            !window.confirm(`Replace your uploaded artwork for ${p.name || 'this character'} with a generated sheet?`)) {
+                          return;
+                        }
+                        onGenerate(p.id);
+                      }}
                       disabled={state.isGenerating}
                       className="comic-btn flex-1 bg-yellow-400 text-black font-comic px-2 py-1 border-2 border-black uppercase text-[11px] hover:bg-yellow-300 disabled:opacity-50"
                     >
                       {p.modelSheet ? 'Reroll' : 'Generate'}
                     </button>
+                    {onUpload && (
+                      <>
+                        <input
+                          ref={el => { fileInputs.current[p.id] = el; }}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={e => {
+                            const file = e.target.files?.[0];
+                            if (file) onUpload(p.id, file);
+                            // Reset so re-picking the same file fires onChange again.
+                            e.target.value = '';
+                          }}
+                        />
+                        <button
+                          onClick={() => fileInputs.current[p.id]?.click()}
+                          disabled={state.isGenerating}
+                          title="Use your own artwork as this character's model sheet"
+                          aria-label={`Upload a model sheet for ${p.name || 'character'}`}
+                          className="comic-btn bg-green-600 text-white font-comic px-2 py-1 border-2 border-black uppercase text-[11px] hover:bg-green-500 disabled:opacity-50"
+                        >
+                          Up
+                        </button>
+                      </>
+                    )}
                     {p.modelSheet && (
                       <button
                         onClick={() => downloadSheet(p, artStyle)}
@@ -228,7 +273,7 @@ export const ModelSheetStrip: React.FC<Props> = ({
                         aria-label={`Download ${p.name || 'character'} model sheet`}
                         className="comic-btn bg-blue-600 text-white font-comic px-2 py-1 border-2 border-black uppercase text-[11px] hover:bg-blue-500 disabled:opacity-50"
                       >
-                        ⬇
+                        Save
                       </button>
                     )}
                     {p.modelSheet && (

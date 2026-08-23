@@ -298,6 +298,7 @@ const App: React.FC = () => {
                   modelSheet: result.imageUrl,
                   modelSheetStyle: storyContext.artStyle,
                   modelSheetAt: Date.now(),
+                  modelSheetSource: 'generated',
               });
               setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: false } }));
           } else {
@@ -314,10 +315,51 @@ const App: React.FC = () => {
       }
   };
 
+  /**
+   * Use an image the user already has as the canonical model sheet.
+   *
+   * Plenty of people arrive with existing character art — a commissioned
+   * turnaround, a reference sheet built elsewhere — which is a better source of
+   * truth than anything generated from a photo. Tagged with the current art
+   * style, since uploading is the user asserting it matches.
+   */
+  const handleUploadModelSheet = async (personaId: string, file: File) => {
+      if (!file.type.startsWith('image/')) {
+          setModelSheetStates(prev => ({
+              ...prev, [personaId]: { isGenerating: false, error: 'not an image file' },
+          }));
+          return;
+      }
+      setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: true } }));
+      try {
+          // Full data URL, not bare base64: the sheet is rendered via <img src>
+          // and downloaded via an anchor href, both of which need the prefix.
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+          });
+          updateAnyCharacter(personaId, {
+              modelSheet: dataUrl,
+              modelSheetStyle: storyContext.artStyle,
+              modelSheetAt: Date.now(),
+              modelSheetSource: 'uploaded',
+          });
+          setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: false } }));
+      } catch (e) {
+          console.error('[modelSheet] upload failed', e);
+          setModelSheetStates(prev => ({
+              ...prev, [personaId]: { isGenerating: false, error: 'could not read that file' },
+          }));
+      }
+  };
+
   /** Drop a model sheet so pages fall back to the raw portrait. */
   const handleClearModelSheet = (personaId: string) => {
       updateAnyCharacter(personaId, {
-          modelSheet: undefined, modelSheetStyle: undefined, modelSheetAt: undefined,
+          modelSheet: undefined, modelSheetStyle: undefined,
+          modelSheetAt: undefined, modelSheetSource: undefined,
       });
       setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: false } }));
   };
@@ -381,6 +423,7 @@ const App: React.FC = () => {
       onGenerate: handleGenerateModelSheet,
       onClear: handleClearModelSheet,
       onGenerateAll: handleGenerateAllModelSheets,
+      onUpload: handleUploadModelSheet,
   };
 
   // --- Sync comicFaces to Zustand store ---

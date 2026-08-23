@@ -30,6 +30,7 @@ interface Props {
         onGenerate: (personaId: string) => void;
         onClear: (personaId: string) => void;
         onGenerateAll: () => void;
+        onUpload?: (personaId: string, file: File) => void;
     };
 }
 
