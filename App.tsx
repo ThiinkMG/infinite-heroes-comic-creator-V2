@@ -48,6 +48,8 @@ import { useVisualQA, type QACharacterInput } from './hooks/useVisualQA';
 import { retryWithBackoff } from './utils/retryWithBackoff';
 import { convertToCmykSafe, analyzeGamut } from './utils/cmykExport';
 import { downloadAsZip } from './utils/zipDownload';
+import { composeLettering } from './utils/composeLettering';
+import { placedSFXToElement } from './components/SFXEditor';
 import { softenScene, SAFE_RETRY_DIRECTION } from './utils/sceneSafety';
 import { saveSnapshot, loadSnapshot, deleteSnapshot, pruneSnapshots, CAST_SNAPSHOT_KEY } from './utils/sessionSnapshots';
 import { generationAnnouncement } from './utils/comicAccessibility';
@@ -56,6 +58,10 @@ import type { ModelSheetState } from './components/ModelSheetStrip';
 import { ScriptReader } from './components/ScriptReader';
 import { useConfirm } from './components/ConfirmDialog';
 import { useToast } from './contexts/ToastContext';
+import { BubbleEditor } from './components/BubbleEditor';
+import { SFXEditor } from './components/SFXEditor';
+import { CharacterLibraryModal } from './components/CharacterLibraryModal';
+import type { SpeechBubble, PlacedSFX } from './types';
 import { createImageQueue } from './utils/requestQueue';
 import { useExportImport } from './hooks/useExportImport';
 import { buildAllCharacterReferences } from './utils/buildCharacterReference';
@@ -485,6 +491,16 @@ const App: React.FC = () => {
   // to go to console.warn were invisible, which made failed validation look like
   // a dead button.
   const { showToast } = useToast();
+
+  /**
+   * Page currently open in a lettering editor, or null.
+   *
+   * AI lettering is unreliable on this project — pages have returned with no
+   * dialogue, and an emblem once rendered as the word "SOLARI". Correcting a
+   * page by hand is cheaper and far more predictable than rerolling it.
+   */
+  const [letteringTarget, setLetteringTarget] = useState<{ faceId: string; tool: 'bubbles' | 'sfx' } | null>(null);
+  const [showCharacterLibrary, setShowCharacterLibrary] = useState(false);
   /**
    * Pages already rendered in a just-restored draft. Drives the "open the comic"
    * affordance on the setup screen; zero means there is nothing to resume.
@@ -1029,6 +1045,38 @@ const App: React.FC = () => {
       const idx = historyRef.current.findIndex(f => f.id === id);
       if (idx !== -1) historyRef.current[idx] = { ...historyRef.current[idx], ...updates };
   };
+
+  /** Open a lettering editor on the page currently being viewed. */
+  const openLetteringEditor = (tool: 'bubbles' | 'sfx') => {
+      const pageIndex = currentSheetIndex === 0 ? 0 : (currentSheetIndex - 1) * 2 + 1;
+      const face = comicFaces.find(fc => fc.pageIndex === pageIndex && fc.imageUrl)
+          ?? comicFaces.find(fc => fc.imageUrl);
+      if (!face) {
+          showToast({ type: 'warning', message: 'Generate a page before adding lettering to it.' });
+          return;
+      }
+      setLetteringTarget({ faceId: face.id, tool });
+  };
+
+  const handleBubblesChange = (faceId: string, bubbles: SpeechBubble[]) => {
+      updateFaceState(faceId, { bubbles });
+  };
+
+  const handleSFXChange = (faceId: string, sfx: PlacedSFX[]) => {
+      updateFaceState(faceId, { sfx });
+  };
+
+  /** Add a saved character from the library to the current cast. */
+  const handleLibrarySelect = (persona: Persona, profile?: CharacterProfile) => {
+      const store = useCharacterStore.getState();
+      if (!store.hero) store.setHero(persona);
+      else if (!store.friend) store.setFriend(persona);
+      else store.addCharacter(persona);
+      if (profile) store.setCharacterProfile(persona.id, profile);
+      setShowCharacterLibrary(false);
+      showToast({ type: 'success', message: `${persona.name || 'Character'} added to your cast.` });
+  };
+
 
   /**
    * Score a rendered panel against its cast's canonical references.
@@ -2472,11 +2520,19 @@ Create a powerful, memorable conclusion that honors the user's story path.
         const face = pagesToPrint[index];
         if (index > 0) doc.addPage([PAGE_WIDTH, PAGE_HEIGHT], 'portrait');
         if (face.imageUrl) {
+            // Burn in any hand-placed lettering first, so the export matches
+            // what the reader shows.
+            const letteredUrl = await composeLettering({
+              imageUrl: face.imageUrl,
+              bubbles: face.bubbles,
+              sfx: face.sfx,
+              toSFXElement: (p) => placedSFXToElement(p),
+            });
             const coverIsSupplied = Boolean(storyContext.preGeneratedCover)
               && face.imageUrl === storyContext.preGeneratedCover;
             let finalImg = (face.type === 'cover' && storyContext.useOverlayLogo && !coverIsSupplied)
-                ? await compositeCover(face.imageUrl, storyContext)
-                : face.imageUrl;
+                ? await compositeCover(letteredUrl, storyContext)
+                : letteredUrl;
 
             // Apply CMYK adjustment if enabled
             if (cmykMode) {
@@ -2504,6 +2560,14 @@ Create a powerful, memorable conclusion that honors the user's story path.
       
       let downloadUrl = face.imageUrl;
       
+      // Same compositing for image export: what is shown is what is saved.
+      downloadUrl = await composeLettering({
+        imageUrl: downloadUrl,
+        bubbles: face.bubbles,
+        sfx: face.sfx,
+        toSFXElement: (p) => placedSFXToElement(p),
+      });
+
       const suppliedCoverPage = Boolean(storyContext.preGeneratedCover)
         && face.imageUrl === storyContext.preGeneratedCover;
       if (face.type === 'cover' && storyContext.useOverlayLogo && !suppliedCoverPage) {
@@ -3481,6 +3545,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           skipProfileAnalysis={skipProfileAnalysis}
           onSkipProfileAnalysisChange={setSkipProfileAnalysis}
           modelSheetProps={modelSheetProps}
+          onOpenCharacterLibrary={() => setShowCharacterLibrary(true)}
           onCoverUpload={handleCoverUpload}
           onCoverRemove={handleCoverRemove}
           onCoverFitChange={handleCoverFitChange}
@@ -3643,6 +3708,22 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
                       </div>
                   </div>
               )}
+              {/* Fix lettering by hand rather than rerolling the whole page. */}
+              <button
+                  onClick={() => openLetteringEditor('bubbles')}
+                  className="comic-btn text-xs bg-white text-black px-3 py-1 font-comic tracking-widest border-[2px] border-black shadow-[2px_2px_0_rgba(0,0,0,1)] hover:bg-gray-100 self-end"
+                  title="Add or fix speech bubbles on this page"
+              >
+                  BUBBLES
+              </button>
+              <button
+                  onClick={() => openLetteringEditor('sfx')}
+                  className="comic-btn text-xs bg-white text-black px-3 py-1 font-comic tracking-widest border-[2px] border-black shadow-[2px_2px_0_rgba(0,0,0,1)] hover:bg-gray-100 self-end"
+                  title="Add sound effects to this page"
+              >
+                  SFX
+              </button>
+
               {/* Reading mode — text alternative for the artwork, and a handy proofing view. */}
               <button
                   onClick={() => setShowScriptReader(true)}
@@ -3707,6 +3788,36 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
       )}
 
       {confirmDialog}
+
+      {letteringTarget && (() => {
+          const face = comicFaces.find(fc => fc.id === letteringTarget.faceId);
+          if (!face?.imageUrl) return null;
+          return letteringTarget.tool === 'bubbles' ? (
+              <BubbleEditor
+                  panelImage={face.imageUrl}
+                  initialBubbles={face.bubbles}
+                  characters={[getHero(), getFriend(), ...getAdditionalChars()]
+                      .filter(Boolean)
+                      .map(p => ({ id: p!.id, name: p!.name || 'Character' }))}
+                  onBubblesChange={(bubbles) => handleBubblesChange(face.id, bubbles)}
+                  onClose={() => setLetteringTarget(null)}
+              />
+          ) : (
+              <SFXEditor
+                  panelImage={face.imageUrl}
+                  initialSFX={face.sfx}
+                  onSFXChange={(sfx) => handleSFXChange(face.id, sfx)}
+                  onClose={() => setLetteringTarget(null)}
+              />
+          );
+      })()}
+
+      {showCharacterLibrary && (
+          <CharacterLibraryModal
+              onClose={() => setShowCharacterLibrary(false)}
+              onSelectCharacter={handleLibrarySelect}
+          />
+      )}
 
       {showScriptReader && (
         <ScriptReader

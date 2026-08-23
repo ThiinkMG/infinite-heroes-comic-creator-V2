@@ -46,6 +46,8 @@ interface SetupProps {
     onFriendUpdate: (updates: Partial<Persona>) => void;
     onResetFriend: () => void;
     onAddCharacter: () => void;
+    /** Open the saved-character library so a cast member can be reused across issues. */
+    onOpenCharacterLibrary?: () => void;
     onUpdateCharacter: (id: string, updates: Partial<Persona>) => void;
     onDeleteCharacter: (id: string) => void;
     onStoryContextUpdate: (updates: Partial<StoryContext>) => void;
@@ -523,6 +525,15 @@ export const Setup: React.FC<SetupProps> = (props) => {
                             >
                                 ADD CHARACTER
                             </button>
+                            {props.onOpenCharacterLibrary && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); props.onOpenCharacterLibrary!(); }}
+                                    className="comic-btn bg-teal-600 text-white text-[10px] sm:text-xs px-2 py-1 border-2 border-black uppercase hover:bg-teal-500 ml-1"
+                                    title="Reuse a character you saved from another issue"
+                                >
+                                    FROM LIBRARY
+                                </button>
+                            )}
                         </div>
 
                         <div

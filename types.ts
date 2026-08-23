@@ -4,6 +4,28 @@
 */
 
 import { ensureString } from './claudeHelpers';
+import type { SpeechBubble } from './utils/bubbleRenderer';
+
+export type { SpeechBubble };
+
+/**
+ * A sound effect placed on a panel by hand.
+ *
+ * Defined here rather than in the editor component so ComicFace can reference it
+ * without types.ts depending on the UI layer.
+ */
+export interface PlacedSFX {
+  /** Unique identifier */
+  id: string;
+  /** Reference to SFX_LIBRARY entry ID */
+  sfxId: string;
+  /** Position on panel (percentage 0-100) */
+  position: { x: number; y: number };
+  /** Scale factor (1.0 = normal) */
+  scale: number;
+  /** Rotation in degrees */
+  rotation: number;
+}
 
 // Novel Mode batch size: pages generated per "act" before a decision point.
 // 2 = one spread (left + right) before each choice — feels natural in spread view.
@@ -408,6 +430,18 @@ export interface ComicFace {
     isExtraPage?: boolean;
     /** Custom action that led to this page generation (for drift detection) */
     customActionUsed?: string;
+
+    /**
+     * Hand-placed speech bubbles, layered over the generated art.
+     *
+     * AI lettering on this project is unreliable — pages have come back with no
+     * dialogue at all, and with an emblem rendered as the word "SOLARI". These
+     * let a page be corrected without regenerating it, which is both cheaper and
+     * more predictable than another roll of the dice.
+     */
+    bubbles?: SpeechBubble[];
+    /** Hand-placed sound effects, layered over the generated art. */
+    sfx?: PlacedSFX[];
 }
 
 /** Novel Mode state for page-by-page interactive flow */

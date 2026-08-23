@@ -15,6 +15,7 @@
  * - Export/save placed SFX positions
  */
 
+import type { PlacedSFX } from '../types';
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import {
   SFX_LIBRARY,
@@ -39,18 +40,9 @@ import {
 /**
  * Represents a placed SFX on the panel
  */
-export interface PlacedSFX {
-  /** Unique identifier */
-  id: string;
-  /** Reference to SFX_LIBRARY entry ID */
-  sfxId: string;
-  /** Position on panel (percentage 0-100) */
-  position: { x: number; y: number };
-  /** Scale factor (1.0 = normal) */
-  scale: number;
-  /** Rotation in degrees */
-  rotation: number;
-}
+// PlacedSFX lives in types.ts so ComicFace can hold it without types depending
+// on the UI layer. Re-exported here for existing imports.
+export type { PlacedSFX };
 
 /**
  * Props for the SFXEditor component
@@ -73,7 +65,7 @@ export interface SFXEditorProps {
 /**
  * Convert PlacedSFX to SFXElement for rendering
  */
-function placedSFXToElement(placed: PlacedSFX, isSelected: boolean): SFXElement | null {
+export function placedSFXToElement(placed: PlacedSFX, isSelected: boolean = false): SFXElement | null {
   const sfxEntry = getSFXById(placed.sfxId);
   if (!sfxEntry) return null;
 
@@ -594,7 +586,7 @@ export const SFXEditor: React.FC<SFXEditorProps> = ({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[700] bg-black/70 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-2xl w-full max-w-6xl max-h-[95vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b-4 border-black bg-yellow-100">

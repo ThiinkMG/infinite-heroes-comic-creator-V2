@@ -3,10 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { ComicFace, getComicConfig, StoryContext } from './types';
 import { LoadingFX } from './LoadingFX';
 import { describeFace } from './utils/comicAccessibility';
+import { BubbleOverlay } from './components/BubbleOverlay';
+import { SFXOverlay } from './components/SFXOverlay';
+import { placedSFXToElement } from './components/SFXEditor';
 import { useCharacterStore } from './stores/useCharacterStore';
 
 interface PanelProps {
@@ -29,6 +32,28 @@ export const Panel: React.FC<PanelProps> = ({ face, allFaces, storyContext, gene
     const [showCustomChoice, setShowCustomChoice] = useState(false);
     const [customChoiceText, setCustomChoiceText] = useState('');
     const [showSkipConfirm, setShowSkipConfirm] = useState(false);
+
+    /**
+     * Live pixel size of the panel.
+     *
+     * BubbleOverlay and SFXOverlay take pixel dimensions, not percentages —
+     * bubble coordinates are stored as percentages and converted against these.
+     * Passing the wrong unit renders the whole overlay a hundred pixels wide,
+     * which is indistinguishable from it not rendering at all.
+     */
+    const overlayRef = useRef<HTMLDivElement>(null);
+    const [overlaySize, setOverlaySize] = useState({ width: 0, height: 0 });
+
+    useLayoutEffect(() => {
+        const el = overlayRef.current;
+        if (!el) return;
+        const measure = () => setOverlaySize({ width: el.clientWidth, height: el.clientHeight });
+        measure();
+        // The reader zooms and reflows, so a one-off measurement goes stale.
+        const observer = new ResizeObserver(measure);
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [face?.id, face?.imageUrl]);
 
     // Reset custom choice UI when navigating to a new decision page (single-page view reuses the same Panel instance)
     useEffect(() => {
@@ -80,6 +105,34 @@ export const Panel: React.FC<PanelProps> = ({ face, allFaces, storyContext, gene
                             : ''
                     }`}
                 />
+            )}
+
+            {/*
+              Hand-placed lettering, layered over the generated art.
+
+              Positions are percentages of the panel, so these track the image at
+              any zoom. Rendered read-only here; editing happens in the dedicated
+              editors, which write back to the face.
+            */}
+            {face.imageUrl && (
+                <div ref={overlayRef} className="absolute inset-0 pointer-events-none z-20">
+                    {face.sfx && face.sfx.length > 0 && (
+                        <SFXOverlay
+                            elements={face.sfx
+                                .map(p => placedSFXToElement(p))
+                                .filter((el): el is NonNullable<typeof el> => el !== null)}
+                            interactive={false}
+                        />
+                    )}
+                    {face.bubbles && face.bubbles.length > 0 && overlaySize.width > 0 && (
+                        <BubbleOverlay
+                            bubbles={face.bubbles}
+                            panelWidth={overlaySize.width}
+                            panelHeight={overlaySize.height}
+                            editable={false}
+                        />
+                    )}
+                </div>
             )}
             
             {/* Failed Generation State */}
