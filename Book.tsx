@@ -81,6 +81,8 @@ function useIsPortraitMobile(): boolean {
 }
 
 interface BookProps {
+    /** Reports page-generation progress so the shell can display it. */
+    onProgressChange?: (p: { isGenerating: boolean; done: number; total: number }) => void;
     comicFaces: ComicFace[];
     currentSheetIndex: number;
     /** Current single-page index for single-page mode (optional - will be calculated from sheetIndex if not provided) */
@@ -128,6 +130,13 @@ export const Book: React.FC<BookProps> = (props) => {
     const doneCount = props.comicFaces.filter(f => !f.isLoading && !!f.imageUrl).length;
     const totalExpected = props.comicFaces.length;
     const isGenerating = generatingCount > 0;
+
+    // Surface progress to the app shell, which renders it somewhere nothing can
+    // cover. Effect rather than render-time call to avoid setting state during
+    // another component's render.
+    useEffect(() => {
+        props.onProgressChange?.({ isGenerating, done: doneCount, total: totalExpected });
+    }, [isGenerating, doneCount, totalExpected]);
 
     // Novel Mode: detect unresolved decision pages to lock navigation
     const unresolvedDecisionPage = useMemo(() => {
@@ -558,13 +567,17 @@ export const Book: React.FC<BookProps> = (props) => {
                     </button>
                 )}
 
-                {/* Generation progress indicator */}
-                {!props.isSetupVisible && isGenerating && (
-                    <div className="absolute -top-10 left-0 z-40 hidden sm:flex items-center gap-1.5 text-xs font-comic text-purple-300 animate-pulse">
-                        <span className="inline-block w-2 h-2 rounded-full bg-purple-400 animate-ping" />
-                        <span>Generating {doneCount}/{totalExpected} pages…</span>
-                    </div>
-                )}
+                {/*
+                  The generation indicator used to live here, at `absolute -top-10
+                  left-0 z-40`. The book is centred and transformed, so on common
+                  viewports that placed it directly beneath the reader's top
+                  navigation — which sits at z-[100] — leaving faint purple text
+                  hidden behind the buttons. During Novel Mode it was the only
+                  progress signal there was.
+
+                  It now renders as a fixed status pill in App.tsx, where nothing
+                  can cover it. Book reports the counts upward instead.
+                */}
 
                 {sheetsToRender.map((sheet, i) => (
                     <div

@@ -532,6 +532,14 @@ const App: React.FC = () => {
    * affordance on the setup screen; zero means there is nothing to resume.
    */
   const [resumablePageCount, setResumablePageCount] = useState(0);
+  /**
+   * Page-generation progress, reported by the reader.
+   *
+   * Rendered by the shell rather than inside the book: the book is centred and
+   * transformed, so an indicator positioned relative to it slid underneath the
+   * top navigation on ordinary viewports and became invisible.
+   */
+  const [readerProgress, setReaderProgress] = useState<{ isGenerating: boolean; done: number; total: number } | null>(null);
   /** Casting-step props, shared by the setup screen and the profiles dialog. */
   const modelSheetProps = {
       characters: [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[],
@@ -3856,6 +3864,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
       >
           <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', transition: zoom === 1 ? 'transform 0.2s ease-out' : 'none', minWidth: 'max-content', minHeight: 'max-content', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Book 
+          onProgressChange={setReaderProgress}
           comicFaces={comicFaces}
           currentSheetIndex={currentSheetIndex}
           isStarted={isStarted}
@@ -3879,12 +3888,31 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
 
       {/* Top Left Mode Badge */}
       {isStarted && !showSetup && (
-        <div className="fixed top-4 left-4 z-[100] flex gap-2 items-center pointer-events-none">
+        <div className="fixed top-4 left-4 z-[100] flex flex-col gap-2 items-start pointer-events-none">
             <div className="bg-black/90 px-5 py-2 border-[3px] border-white shadow-[4px_4px_0_rgba(0,0,0,1)] flex items-center gap-2 rounded-sm transform -rotate-1">
                 <span className="text-yellow-400 font-comic text-xl tracking-wider uppercase font-bold">
                    {generateFromOutline ? "📖 OUTLINE MODE" : "🎲 NOVEL MODE"}
                 </span>
             </div>
+
+            {/*
+              What the app is doing right now. Stacked under the mode badge on the
+              left, where the top navigation cannot cover it. White on near-black
+              rather than the old purple-on-dark, which was unreadable even when
+              it was not hidden.
+            */}
+            {readerProgress?.isGenerating && (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    className="bg-purple-700 border-[3px] border-white shadow-[4px_4px_0_rgba(0,0,0,1)] px-3 py-1.5 flex items-center gap-2 rounded-sm"
+                >
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+                    <span className="font-comic text-white text-sm uppercase tracking-wide">
+                        Drawing page {Math.min(readerProgress.done + 1, readerProgress.total)} of {readerProgress.total}
+                    </span>
+                </div>
+            )}
         </div>
       )}
 
