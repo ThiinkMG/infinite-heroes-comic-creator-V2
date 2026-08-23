@@ -52,9 +52,10 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
                 <button
                     onClick={onExportDraft}
                     className="comic-btn bg-indigo-600 text-white text-base sm:text-lg lg:text-xl px-3 py-2.5 sm:py-3 hover:bg-indigo-500 uppercase tracking-wider border-[3px] border-black font-bold touch-manipulation min-h-[48px]"
-                    aria-label="Save draft"
+                    aria-label="Save setup: cast and story settings"
+                    title="Download your cast and story settings. Reopening it returns here."
                 >
-                    💾 SAVE
+                    💾 SAVE SETUP
                 </button>
                 <label className="comic-btn text-center bg-gray-600 text-white text-base sm:text-lg lg:text-xl px-3 py-2.5 sm:py-3 hover:bg-gray-500 uppercase tracking-wider cursor-pointer border-[3px] border-black font-bold touch-manipulation min-h-[48px] flex items-center justify-center">
                     📂 LOAD

@@ -90,6 +90,10 @@ interface SetupProps {
      * model sheet is something you decide about while configuring the cast —
      * and because the launch flow can skip the profiles dialog entirely.
      */
+    /** Supply an existing cover instead of generating one. */
+    onCoverUpload?: (file: File) => Promise<void>;
+    /** Drop a supplied cover so the next run generates one. */
+    onCoverRemove?: () => void;
     /** True while the saved cast is still being read from storage. */
     isCastLoading?: boolean;
     /**
@@ -115,6 +119,7 @@ interface SetupProps {
         onClear: (personaId: string) => void;
         onGenerateAll: () => void;
         onUpload?: (personaId: string, file: File) => void;
+        onConfirm?: (options: { title: string; message: string; confirmLabel?: string; destructive?: boolean }) => Promise<boolean>;
     };
 }
 
@@ -935,6 +940,8 @@ export const Setup: React.FC<SetupProps> = (props) => {
 
                             {/* Cover Config */}
                             <CoverConfigSection
+                                onCoverUpload={props.onCoverUpload}
+                                onCoverRemove={props.onCoverRemove}
                                 storyContext={props.storyContext}
                                 onStoryContextUpdate={props.onStoryContextUpdate}
                             />

@@ -35,6 +35,13 @@ interface Props {
   onViewSheet?: (personaId: string) => void;
   /** Use an image the user already has as the canonical sheet. */
   onUpload?: (personaId: string, file: File) => void;
+  /**
+   * Awaitable confirm. Supplied by the host so this component does not depend on
+   * window.confirm, which returns false when the browser suppresses it.
+   */
+  onConfirm?: (options: {
+    title: string; message: string; confirmLabel?: string; destructive?: boolean;
+  }) => Promise<boolean>;
   /** Generate sheets for every character that does not have a current one. */
   onGenerateAll: () => void;
 }
@@ -120,7 +127,7 @@ const SheetLightbox: React.FC<{
 };
 
 export const ModelSheetStrip: React.FC<Props> = ({
-  characters, artStyle, states, onGenerate, onClear, onGenerateAll, onViewSheet, onUpload,
+  characters, artStyle, states, onGenerate, onClear, onGenerateAll, onViewSheet, onUpload, onConfirm,
 }) => {
   const [viewingId, setViewingId] = useState<string | null>(null);
   // One input per character, so the file picker knows which card it belongs to.
@@ -226,12 +233,17 @@ export const ModelSheetStrip: React.FC<Props> = ({
                   )}
                   <div className="flex gap-1">
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         // Regenerating over uploaded artwork is destructive and
                         // unrecoverable, so make the user mean it.
-                        if (p.modelSheetSource === 'uploaded' &&
-                            !window.confirm(`Replace your uploaded artwork for ${p.name || 'this character'} with a generated sheet?`)) {
-                          return;
+                        if (p.modelSheetSource === 'uploaded' && onConfirm) {
+                          const ok = await onConfirm({
+                            title: 'Replace your artwork?',
+                            message: `${p.name || 'This character'} is using a sheet you uploaded. Generating a new one replaces it, and the app cannot recreate your original.`,
+                            confirmLabel: 'Generate new sheet',
+                            destructive: true,
+                          });
+                          if (!ok) return;
                         }
                         onGenerate(p.id);
                       }}

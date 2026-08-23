@@ -11,6 +11,10 @@ import { Tooltip } from './Tooltip';
  * Props for the CoverConfigSection component.
  */
 export interface CoverConfigSectionProps {
+    /** Supply an existing cover instead of generating one. */
+    onCoverUpload?: (file: File) => Promise<void>;
+    /** Drop a supplied cover so the next run generates one. */
+    onCoverRemove?: () => void;
     /** Current story context object */
     storyContext: StoryContext;
     /** Handler for story context updates */
@@ -22,6 +26,8 @@ export interface CoverConfigSectionProps {
  * Includes series title, publisher name, issue number, and logo/branding options.
  */
 export const CoverConfigSection: React.FC<CoverConfigSectionProps> = ({
+    onCoverUpload,
+    onCoverRemove,
     storyContext,
     onStoryContextUpdate
 }) => {
@@ -72,6 +78,50 @@ export const CoverConfigSection: React.FC<CoverConfigSectionProps> = ({
                 </div>
                 <div className="col-span-2 flex flex-col gap-2">
                     <p className="font-comic text-xs mb-1 font-bold text-gray-800 uppercase">Publisher Logo / Branding</p>
+                    {onCoverUpload && (
+                        <div className="w-full mb-2 border-2 border-black bg-emerald-50 p-2">
+                            <p className="font-comic text-[11px] uppercase text-emerald-900 mb-1">
+                                Cover art (optional)
+                            </p>
+                            {storyContext.preGeneratedCover ? (
+                                <div className="flex items-center gap-2">
+                                    <img
+                                        src={storyContext.preGeneratedCover}
+                                        alt="Your supplied cover art"
+                                        className="h-16 w-auto border-2 border-black object-contain"
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-ui text-[11px] text-gray-700">
+                                            Using your cover. The cover page will not be generated.
+                                        </p>
+                                    </div>
+                                    <button
+                                        onClick={onCoverRemove}
+                                        aria-label="Remove supplied cover art"
+                                        className="comic-btn bg-gray-200 text-black font-comic px-2 py-1 border-2 border-black uppercase text-[11px] hover:bg-gray-300"
+                                    >
+                                        Remove
+                                    </button>
+                                </div>
+                            ) : (
+                                <label className="comic-btn bg-emerald-600 text-white text-xs px-2 py-1.5 hover:bg-emerald-500 cursor-pointer border-2 border-black flex items-center justify-center w-full">
+                                    <span>Upload Cover — skips generating one</span>
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        aria-label="Upload cover art"
+                                        onChange={(e) => {
+                                            const file = e.target.files?.[0];
+                                            if (file) onCoverUpload(file);
+                                            e.target.value = '';
+                                        }}
+                                    />
+                                </label>
+                            )}
+                        </div>
+                    )}
+
                     <label className="comic-btn bg-gray-200 text-black text-xs px-2 py-1 hover:bg-gray-300 cursor-pointer border-2 border-black flex items-center justify-center gap-2">
                         {storyContext.publisherLogo ? (
                             <img src={`data:image/jpeg;base64,${storyContext.publisherLogo}`} className="max-h-6" alt="Publisher logo" />

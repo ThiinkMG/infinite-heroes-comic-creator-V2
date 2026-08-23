@@ -292,6 +292,15 @@ export interface StoryContext {
   pageLength: number;
   publisherLogoBgColor?: string;
   publisherLogoFit?: 'cover' | 'contain';
+  /**
+   * A cover the user already has, supplied instead of generating one.
+   *
+   * The cover is the single most expensive page — it is generated first, before
+   * the user has seen anything, and it is the page most often rerolled. Anyone
+   * arriving with existing key art should not pay to have it reinvented.
+   * Stored as a full data URL so it can be rendered and exported unchanged.
+   */
+  preGeneratedCover?: string;
 }
 
 /**
@@ -404,6 +413,15 @@ export interface NovelModeState {
  * making it say so directly removes an entire class of parsing bugs and
  * lets the image prompt be assembled from clean fields.
  */
+/**
+ * What a saved draft is for.
+ *
+ * 'setup' reopens the welcome screen with the cast and story settings loaded,
+ * for editing. 'comic' reopens the rendered pages. Drafts written before this
+ * existed carry no kind and are classified by whether they contain finished art.
+ */
+export type DraftKind = 'setup' | 'comic';
+
 export interface ArtDirection {
   /** Characters physically visible in this panel — role keys ('hero','friend') or exact names. */
   characters_present: string[];

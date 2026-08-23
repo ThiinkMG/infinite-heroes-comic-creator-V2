@@ -8,7 +8,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
 import jsPDF from 'jspdf';
-import { getComicConfig, ART_STYLES, GENRES, TONES, LANGUAGES, ComicFace, Beat, Persona, StoryContext, StoryOutline, CharacterProfile, NOVEL_MODE_BATCH_SIZE, generateHardNegatives, formatIdentityHeader, formatReinforcedScene, formatConsistencyInstruction, IdentityHeader, RegenerationMode, PageCharacterPlan, TransitionType, ShotType, PanelLayout, EmotionalBeat, PacingIntent, BalloonShape, RerollOptions, getLayoutInstructions, getShotInstructions, getTransitionContext, getFlashbackInstructions, NovelModeState } from './types';
+import { getComicConfig, ART_STYLES, GENRES, TONES, LANGUAGES, ComicFace, Beat, Persona, StoryContext, StoryOutline, CharacterProfile, NOVEL_MODE_BATCH_SIZE, generateHardNegatives, formatIdentityHeader, formatReinforcedScene, formatConsistencyInstruction, IdentityHeader, RegenerationMode, PageCharacterPlan, TransitionType, ShotType, PanelLayout, EmotionalBeat, PacingIntent, BalloonShape, RerollOptions, getLayoutInstructions, getShotInstructions, getTransitionContext, getFlashbackInstructions, NovelModeState, DraftKind } from './types';
 import { COMIC_PRESETS, ComicPreset } from './data/comicPresets';
 import { Setup } from './Setup';
 import { Book } from './Book';
@@ -53,6 +53,7 @@ import { generationAnnouncement } from './utils/comicAccessibility';
 import { GenerationConfirmDialog, type GenerationPlan } from './components/GenerationConfirmDialog';
 import type { ModelSheetState } from './components/ModelSheetStrip';
 import { ScriptReader } from './components/ScriptReader';
+import { useConfirm } from './components/ConfirmDialog';
 import { createImageQueue } from './utils/requestQueue';
 import { useExportImport } from './hooks/useExportImport';
 import { buildAllCharacterReferences } from './utils/buildCharacterReference';
@@ -475,6 +476,9 @@ const App: React.FC = () => {
   const [modelSheetStates, setModelSheetStates] = useState<Record<string, ModelSheetState>>({});
   /** Reading mode: the comic rendered as text. */
   const [showScriptReader, setShowScriptReader] = useState(false);
+  // Replaces window.confirm, which returns false when the browser suppresses it
+  // and so made confirmed actions look like dead buttons.
+  const { confirm, confirmDialog } = useConfirm();
   /**
    * Pages already rendered in a just-restored draft. Drives the "open the comic"
    * affordance on the setup screen; zero means there is nothing to resume.
@@ -489,6 +493,7 @@ const App: React.FC = () => {
       onClear: handleClearModelSheet,
       onGenerateAll: handleGenerateAllModelSheets,
       onUpload: handleUploadModelSheet,
+      onConfirm: confirm,
   };
 
   // --- Sync comicFaces to Zustand store ---
@@ -542,7 +547,7 @@ const App: React.FC = () => {
     if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
     const sessionId = sessionIdRef.current;
     snapshotTimerRef.current = setTimeout(() => {
-      saveSnapshot(sessionId, buildDraftSnapshot())
+      saveSnapshot(sessionId, buildDraftSnapshot('comic'))
         .then(r => {
           if (!r.success) {
             console.warn('[session] snapshot failed:', r.error);
@@ -1602,12 +1607,30 @@ const App: React.FC = () => {
     
     setStoryTone(availableTones[Math.floor(Math.random() * availableTones.length)]);
 
-    const coverFace: ComicFace = { id: 'cover', type: 'cover', choices: [], isLoading: true, pageIndex: 0 };
+    // A supplied cover skips the most expensive call in the run. It is generated
+    // first, before the user has seen anything, so reusing existing key art saves
+    // both money and the wait before the first page appears.
+    const suppliedCover = storyContext.preGeneratedCover;
+    const coverFace: ComicFace = suppliedCover
+      ? {
+          id: 'cover', type: 'cover', choices: [], isLoading: false, pageIndex: 0,
+          imageUrl: suppliedCover,
+          narrative: {
+            scene: `Cover art for "${storyContext.title || 'Untitled'}" (supplied by the user).`,
+            choices: [], focus_char: 'hero',
+          },
+        }
+      : { id: 'cover', type: 'cover', choices: [], isLoading: true, pageIndex: 0 };
+
     setComicFaces([coverFace]);
     historyRef.current = [coverFace];
-    generatingPages.current.add(0);
 
-    generateSinglePage('cover', 0, 'cover').finally(() => generatingPages.current.delete(0));
+    if (!suppliedCover) {
+      generatingPages.current.add(0);
+      generateSinglePage('cover', 0, 'cover').finally(() => generatingPages.current.delete(0));
+    } else {
+      console.log('[cover] using the supplied cover; skipping generation');
+    }
     
     setTimeout(async () => {
         setIsStarted(true);
@@ -2142,20 +2165,36 @@ Create a powerful, memorable conclusion that honors the user's story path.
       setExtraPages(0);
   };
 
-  const handleGoHome = () => {
-      if (window.confirm("Return to setup? Your current generated pages will be lost, but your characters and settings will be saved. To save your generated comic, use the 'Save Draft' button first.")) {
-          isStoppedRef.current = true; // abort any in-flight generation
-          setIsStarted(false);
-          setShowSetup(true);
-          setComicFaces([]);
-          historyRef.current = [];
-          generatingPages.current.clear();
-          setExtraPages(0);
-      }
+  const handleGoHome = async () => {
+      const ok = await confirm({
+          title: 'Back to setup?',
+          message:
+              'This clears the pages from the reader so you can start a new comic.\n\n' +
+              'Your characters, settings, and model sheets are kept, and this comic stays in Recent Sessions — you can reload it from the setup screen at any time.',
+          confirmLabel: 'Back to setup',
+      });
+      if (!ok) return;
+
+      isStoppedRef.current = true; // abort any in-flight generation
+      setIsStarted(false);
+      setShowSetup(true);
+      setComicFaces([]);
+      historyRef.current = [];
+      generatingPages.current.clear();
+      setExtraPages(0);
+      setResumablePageCount(0);
   };
 
-  const handleClearSetup = () => {
-      if (!window.confirm("Are you sure you want to completely clear the setup and characters?")) return;
+  const handleClearSetup = async () => {
+      const ok = await confirm({
+          title: 'Clear everything?',
+          message:
+              'This permanently deletes your characters, their portraits, reference images, and model sheets, along with your story settings.\n\n' +
+              'This cannot be undone. Export a draft first if you might want them back.',
+          confirmLabel: 'Delete everything',
+          destructive: true,
+      });
+      if (!ok) return;
       setHero(null);
       setFriend(null);
       useCharacterStore.getState().clearAdditionalCharacters();
@@ -2506,6 +2545,26 @@ Create a powerful, memorable conclusion that honors the user's story path.
     }
   };
 
+  /** Use an image the user already has as the issue's cover. */
+  const handleCoverUpload = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      console.warn('[cover] not an image file');
+      return;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    setStoryContext(prev => ({ ...prev, preGeneratedCover: dataUrl }));
+  };
+
+  /** Drop a supplied cover so the next run generates one. */
+  const handleCoverRemove = () => {
+    setStoryContext(prev => ({ ...prev, preGeneratedCover: undefined }));
+  };
+
   const handleEmblemUpload = async (id: string, file: File) => {
     try {
       const base64 = await fileToBase64(file);
@@ -2583,9 +2642,13 @@ Create a powerful, memorable conclusion that honors the user's story path.
    * Shared by file export and per-session snapshots so the two can never drift
    * apart — a field added here is automatically covered by both.
    */
-  const buildDraftSnapshot = (): Record<string, unknown> => {
+  const buildDraftSnapshot = (kind: DraftKind = 'comic'): Record<string, unknown> => {
     const store = useCharacterStore.getState();
     return {
+        // What this draft is FOR. A setup draft reopens the welcome screen so the
+        // cast can be edited; a comic draft reopens the finished artwork. One
+        // button producing one ambiguous file made the two indistinguishable.
+        draftKind: kind,
         comicFaces,
         history: historyRef.current,
         hero,
@@ -2672,11 +2735,26 @@ Create a powerful, memorable conclusion that honors the user's story path.
      * explicit way in instead.
      */
     const readyPages = (parsed.comicFaces ?? []).filter((f: ComicFace) => f.imageUrl).length;
+
+    /*
+     * Where to land.
+     *
+     * A comic draft goes straight to the artwork — that is what the user saved
+     * it for. A setup draft opens the welcome screen so the cast and settings
+     * can be edited. Drafts saved before this distinction existed carry no
+     * kind, so fall back to "does it actually contain finished pages", which
+     * also keeps a draft full of failed pages out of the reader.
+     */
+    const kind: DraftKind | undefined = parsed.draftKind;
+    const openReader = kind === 'comic' ? readyPages > 0
+      : kind === 'setup' ? false
+      : readyPages > 0;
+
     setIsStarted(readyPages > 0);
-    setShowSetup(true);
+    setShowSetup(!openReader);
     setIsTransitioning(false);
     setCurrentSheetIndex(1);
-    setResumablePageCount(readyPages);
+    setResumablePageCount(openReader ? 0 : readyPages);
     return readyPages > 0;
   };
 
@@ -2719,13 +2797,21 @@ Create a powerful, memorable conclusion that honors the user's story path.
     deleteSnapshot(sessionId).catch(e => console.warn('[session] snapshot delete failed', e));
   };
 
-  const exportDraft = () => {
-    const data = JSON.stringify(buildDraftSnapshot());
+  /**
+   * Download the current state as a draft file.
+   *
+   * @param kind 'setup' reopens on the welcome screen with the cast and settings
+   *   loaded; 'comic' reopens the rendered pages. The filename says which, so a
+   *   folder of drafts stays readable months later.
+   */
+  const exportDraft = (kind: DraftKind = 'comic') => {
+    const data = JSON.stringify(buildDraftSnapshot(kind));
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
+    const stem = storyContext.title ? storyContext.title.replace(/\s+/g, '_') : 'Infinite_Heroes';
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${storyContext.title ? storyContext.title.replace(/\s+/g,'_') : 'Infinite_Heroes'}_Draft.json`;
+    a.download = `${stem}_${kind === 'setup' ? 'Setup' : 'Comic'}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -3179,7 +3265,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={exportDraft}
+                onClick={() => exportDraft('comic')}
                 className="comic-btn bg-white text-black px-4 py-1.5 text-sm font-bold border-2 border-black hover:bg-gray-100 whitespace-nowrap"
               >
                 Export Draft
@@ -3297,13 +3383,15 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           onAISurpriseMe={handleAISurpriseMe}
           isSurprisingMe={isSurprisingMe}
           onOpenSingleImageMode={() => setShowSingleImageMode(true)}
-          onExportDraft={exportDraft}
+          onExportDraft={() => exportDraft('setup')}
           onImportDraft={importDraft}
           onClearSetup={handleClearSetup}
           onImproveText={improveTextWithAI}
           skipProfileAnalysis={skipProfileAnalysis}
           onSkipProfileAnalysisChange={setSkipProfileAnalysis}
           modelSheetProps={modelSheetProps}
+          onCoverUpload={handleCoverUpload}
+          onCoverRemove={handleCoverRemove}
           isCastLoading={isCastLoading}
           resumablePageCount={resumablePageCount}
           onResumeComic={handleResumeComic}
@@ -3526,6 +3614,8 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
         </div>
       )}
 
+      {confirmDialog}
+
       {showScriptReader && (
         <ScriptReader
           faces={comicFaces}
@@ -3624,8 +3714,8 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
             <button onClick={() => setShowGallery(true)} className="comic-btn bg-yellow-400 text-black font-comic px-4 py-2 border-[3px] border-black shadow-[4px_4px_0px_rgba(0,0,0,1)] hover:scale-105 transition-all outline-none text-sm tracking-widest font-bold">
                 🖼️ GALLERY
             </button>
-            <button onClick={exportDraft} className="comic-btn bg-blue-600 text-white font-comic px-4 py-2 border-[3px] border-black shadow-[4px_4px_0px_rgba(0,0,0,1)] hover:scale-105 transition-all outline-none text-sm tracking-widest font-bold">
-                SAVE DRAFT
+            <button onClick={() => exportDraft('comic')} title="Download this comic. Reopening it goes straight to the pages." className="comic-btn bg-blue-600 text-white font-comic px-4 py-2 border-[3px] border-black shadow-[4px_4px_0px_rgba(0,0,0,1)] hover:scale-105 transition-all outline-none text-sm tracking-widest font-bold">
+                SAVE COMIC
             </button>
             <button 
                 onClick={() => setShowExportDialog(true)}
