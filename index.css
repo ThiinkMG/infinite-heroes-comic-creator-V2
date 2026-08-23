@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* ==================== FOCUS INDICATORS ==================== */
 /* Keyboard focus states for accessibility - visible ring on Tab key navigation */
 
@@ -102,4 +106,56 @@ textarea:disabled:focus-visible {
 /* Remove any default browser outlines that might conflict */
 *:focus {
   /* Browser default - overridden by :focus-visible */
+}
+
+/* ==================== TYPOGRAPHY LEGIBILITY ==================== */
+/*
+  Bangers ('font-comic') is a display face: all-caps, tightly spaced, and with
+  letterforms that collapse below roughly 16px. It is right for titles, buttons,
+  and comic chrome, and wrong for anything the reader has to parse carefully or
+  type into.
+
+  These rules use element+class specificity so they override the utility class
+  without requiring every call site to be edited.
+*/
+
+/* Never set a display face on a form control — users need to read what they
+   typed, including lowercase, punctuation, and their own names. */
+input.font-comic,
+textarea.font-comic,
+select.font-comic,
+input[type="text"],
+input[type="password"],
+input[type="number"],
+textarea,
+select {
+  font-family: 'Comic Neue', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  text-transform: none;
+}
+
+/* Placeholders sit at low contrast by default; keep them legible. */
+input::placeholder,
+textarea::placeholder {
+  font-family: 'Comic Neue', system-ui, sans-serif;
+  opacity: 0.65;
+}
+
+/* Bangers has no lowercase, so browsers synthesise it badly at small sizes.
+   Nudge tracking so the smallest labels stay readable. */
+.font-comic.text-\[10px\],
+.font-comic.text-\[11px\],
+.font-comic.text-xs {
+  letter-spacing: 0.03em;
+}
+
+/* Screen-reader-only content must stay reachable when focused (skip links). */
+.sr-only:focus,
+.sr-only:focus-within {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
 }

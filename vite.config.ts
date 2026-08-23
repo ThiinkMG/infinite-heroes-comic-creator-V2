@@ -6,7 +6,8 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
       server: {
-        port: 3000,
+        // Honour PORT so multiple dev servers can run side by side.
+        port: Number(process.env.PORT) || 3000,
         host: '0.0.0.0',
       },
       plugins: [react()],
