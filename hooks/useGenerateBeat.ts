@@ -27,6 +27,7 @@ import { createTextContent, createImageContent, extractJsonFromResponse, getText
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import { useMetricsStore } from '../stores/useMetricsStore';
+import { softenScene, looksRisky } from '../utils/sceneSafety';
 
 // ============================================================================
 // TYPES
@@ -196,6 +197,30 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
 
     if (!['hero', 'friend', 'other'].includes(result.focus_char)) {
       result.focus_char = 'hero';
+    }
+
+    /*
+     * Soften the scene before it ever reaches the image model.
+     *
+     * The prompt asks the writer to keep scenes renderable, but it is not a
+     * reliable judge of another model's safety filter, and a refused page costs
+     * the user a full generation. Captions, dialogue, and choices are untouched:
+     * they are lettered, not drawn, so they can carry the weight the picture
+     * cannot.
+     */
+    if (looksRisky(result.scene)) {
+      const softened = softenScene(result.scene);
+      if (softened.changed) {
+        console.warn('[safety] Softened scene wording before rendering:', softened.matched);
+        result.scene = softened.text;
+      }
+    }
+    if (result.art) {
+      const action = softenScene(result.art.action);
+      const environment = softenScene(result.art.environment);
+      if (action.changed || environment.changed) {
+        result.art = { ...result.art, action: action.text, environment: environment.text };
+      }
     }
 
     return result;

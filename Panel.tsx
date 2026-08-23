@@ -292,7 +292,10 @@ export const Panel: React.FC<PanelProps> = ({ face, allFaces, storyContext, gene
             {face.type === 'cover' && (
                  <>
                      {/* Comic Overlay UI */}
-                     {storyContext.useOverlayLogo && (
+                     {/* Never overlay a cover the user supplied: their art already
+                         carries its own title treatment, so compositing ours on top
+                         double-prints it. */}
+                     {storyContext.useOverlayLogo && !isSuppliedCover && (
                          <div className="absolute inset-0 pointer-events-none z-10 p-4 drop-shadow-md">
                              <div className="w-24 bg-white border-[3px] border-black flex flex-col items-center shadow-[4px_4px_0px_rgba(0,0,0,1)]">
                                  <div 

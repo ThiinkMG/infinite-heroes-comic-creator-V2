@@ -116,6 +116,15 @@ export const RerollModal: React.FC<RerollModalProps> = ({
 
     // === REGENERATION MODE STATE ===
     const [regenerationModes, setRegenerationModes] = useState<Set<RegenerationMode>>(new Set(['full']));
+    /**
+     * Rewrite the page's words as well as its art.
+     *
+     * Off by default. Rerolling used to always regenerate the beat, so asking for
+     * a better drawing silently rewrote the story — and a beat regenerated for a
+     * redraw sometimes came back with no dialogue, leaving the page with no
+     * speech bubbles at all.
+     */
+    const [regenerateNarrative, setRegenerateNarrative] = useState(false);
 
     // === REFERENCE IMAGE OPTIONS ===
     // Simplified: Gallery selection directly controls what gets sent
@@ -257,6 +266,7 @@ export const RerollModal: React.FC<RerollModalProps> = ({
 
         const options: RerollOptions = {
             regenerationModes: finalModes,
+            regenerateNarrative: regenerateNarrative || undefined,
             instruction: finalInstruction.trim(),
             negativePrompt: negativePrompt.trim() || undefined,
             selectedRefImages,
@@ -461,6 +471,24 @@ export const RerollModal: React.FC<RerollModalProps> = ({
 
                     {/* ═══ ZONE 2 — Instruction + Subtle toggle + Submit ═══ */}
                     <div className="p-3 sm:p-4 md:p-5 flex flex-col gap-3">
+                        {/* Redrawing and rewriting are different requests. Rerolling used to
+                            do both, which silently changed the story and sometimes returned a
+                            beat with no dialogue, leaving the page with no speech bubbles. */}
+                        <label className="flex items-start gap-2 border-2 border-black bg-amber-50 p-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={regenerateNarrative}
+                                onChange={(e) => setRegenerateNarrative(e.target.checked)}
+                                className="mt-0.5 w-4 h-4 accent-amber-600"
+                            />
+                            <span>
+                                <span className="font-comic text-xs uppercase text-amber-900 block">Rewrite the words too</span>
+                                <span className="font-ui text-[11px] text-gray-700">
+                                    Off keeps this page’s caption, dialogue, and choices exactly as they are and only redraws the art. Turn on to generate new text as well.
+                                </span>
+                            </span>
+                        </label>
+
                         <InstructionInput
                             instruction={instruction}
                             negativePrompt={negativePrompt}

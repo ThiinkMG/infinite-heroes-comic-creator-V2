@@ -48,6 +48,7 @@ import { useVisualQA, type QACharacterInput } from './hooks/useVisualQA';
 import { retryWithBackoff } from './utils/retryWithBackoff';
 import { convertToCmykSafe, analyzeGamut } from './utils/cmykExport';
 import { downloadAsZip } from './utils/zipDownload';
+import { softenScene, SAFE_RETRY_DIRECTION } from './utils/sceneSafety';
 import { saveSnapshot, loadSnapshot, deleteSnapshot, pruneSnapshots, CAST_SNAPSHOT_KEY } from './utils/sessionSnapshots';
 import { generationAnnouncement } from './utils/comicAccessibility';
 import { GenerationConfirmDialog, type GenerationPlan } from './components/GenerationConfirmDialog';
@@ -1066,7 +1067,7 @@ const App: React.FC = () => {
    *   something an image model can act on, and it gets rendered as literal text
    *   on the page instead.
    */
-  const generateSinglePage = async (faceId: string, pageNum: number, type: ComicFace['type'], instruction?: string, extraRefImages?: string[], previousChoices?: string[], comicOverrides?: ComicOverrides, useOnlySelectedRefs?: boolean, currentImageToPreserve?: string, adjacentPageImages?: Array<{ base64: string; label: string }>, consistencyMode?: boolean, profileOverrides?: CharacterProfile[], preserveCharacterIds?: string[], instructionScope: 'both' | 'writer' = 'both') => {
+  const generateSinglePage = async (faceId: string, pageNum: number, type: ComicFace['type'], instruction?: string, extraRefImages?: string[], previousChoices?: string[], comicOverrides?: ComicOverrides, useOnlySelectedRefs?: boolean, currentImageToPreserve?: string, adjacentPageImages?: Array<{ base64: string; label: string }>, consistencyMode?: boolean, profileOverrides?: CharacterProfile[], preserveCharacterIds?: string[], instructionScope: 'both' | 'writer' = 'both', existingBeat?: Beat) => {
       // Use ref (not state) — this async function can be called from generateBatch or handleChoice
       // where the React state closure may be stale from the render that created the caller.
       const isNovelMode = !generateFromOutlineRef.current;
@@ -1091,7 +1092,13 @@ const App: React.FC = () => {
            const backCoverHeroName = getHero()?.name || 'the hero';
            beat = { scene: `Teaser panel: ${backCoverHeroName} faces what comes next. End of issue. Dramatic closing image.`, choices: [], focus_char: 'hero' };
       } else {
-           beat = await generateBeat(historyRef.current, pageNum % 2 === 0, pageNum, isDecision, instruction, previousChoices);
+           // Reuse the page's existing words when the caller supplied them. A
+           // reroll of the artwork should not rewrite the story, and a beat
+           // regenerated for a redraw sometimes came back with no dialogue,
+           // leaving the page with no speech bubbles.
+           beat = existingBeat
+             ? existingBeat
+             : await generateBeat(historyRef.current, pageNum % 2 === 0, pageNum, isDecision, instruction, previousChoices);
       }
 
       // Ensure decision pages always have choices — AI occasionally returns an empty array
@@ -1127,7 +1134,51 @@ const App: React.FC = () => {
       }
 
       const artInstruction = instructionScope === 'writer' ? undefined : instruction;
-      const result = await generateImage(beat, type, artInstruction, extraRefImages, prevImage, prevBeat, pageNum, comicOverrides, useOnlySelectedRefs, currentImageToPreserve, adjacentPageImages, consistencyMode, profileOverrides, preserveCharacterIds);
+      let result = await generateImage(beat, type, artInstruction, extraRefImages, prevImage, prevBeat, pageNum, comicOverrides, useOnlySelectedRefs, currentImageToPreserve, adjacentPageImages, consistencyMode, profileOverrides, preserveCharacterIds);
+      if (isStoppedRef.current) return;
+
+      /*
+       * Automatic recovery from a safety block.
+       *
+       * The writer and the artist are different models with different policies,
+       * and the artist's is stricter — so a page fails for a story the user's own
+       * AI wrote. Retrying the identical prompt fails identically, which is why
+       * Quick Retry so often did nothing.
+       *
+       * The beat is preserved, so the page keeps its caption and dialogue; only
+       * the scene wording is softened, and the direction added tells the model
+       * what to draw instead rather than only what to avoid. One retry: if a
+       * softened scene is still refused, the user should see it and decide.
+       */
+      if (!result.imageUrl
+          && (result.failureReason === 'safety' || result.failureReason === 'content_policy')
+          && !isStoppedRef.current) {
+          const softenedScene = softenScene(beat.scene);
+          const softenedAction = beat.art ? softenScene(beat.art.action) : null;
+          const softenedEnv = beat.art ? softenScene(beat.art.environment) : null;
+
+          if (softenedScene.changed || softenedAction?.changed || softenedEnv?.changed) {
+              console.warn(
+                  `[safety] Page ${pageNum} blocked (${result.failureReason}); retrying with softened wording.`,
+                  softenedScene.matched,
+              );
+              const safeBeat: Beat = {
+                  ...beat,
+                  scene: softenedScene.text,
+                  art: beat.art ? {
+                      ...beat.art,
+                      action: softenedAction!.text,
+                      environment: softenedEnv!.text,
+                  } : undefined,
+              };
+              const retryInstruction = [artInstruction, SAFE_RETRY_DIRECTION].filter(Boolean).join(' ');
+              result = await generateImage(safeBeat, type, retryInstruction, extraRefImages, prevImage, prevBeat, pageNum, comicOverrides, useOnlySelectedRefs, currentImageToPreserve, adjacentPageImages, consistencyMode, profileOverrides, preserveCharacterIds);
+              if (result.imageUrl) {
+                  // Keep the page's words, but store what was actually drawn.
+                  updateFaceState(faceId, { narrative: safeBeat });
+              }
+          }
+      }
       if (isStoppedRef.current) return;
       if (!result.imageUrl) {
           updateFaceState(faceId, { isLoading: false, hasFailed: true, originalPrompt: result.originalPrompt, failureReason: result.failureReason });
@@ -1993,7 +2044,7 @@ Create a powerful, memorable conclusion that honors the user's story path.
 
   const handleRerollSubmit = (options: RerollOptions) => {
       if (rerollTarget === null) return;
-      const { instruction, negativePrompt, selectedRefImages, selectedProfileIds, regenerationModes, shotTypeOverride, balloonShapeOverride, applyFlashbackStyle, reinforceWithReferenceImages, useSelectedRefsOnly, prevPageImageUrl, nextPageImageUrl, consistencyMode, preserveCharacterIds } = options;
+      const { instruction, negativePrompt, selectedRefImages, selectedProfileIds, regenerationModes, regenerateNarrative, shotTypeOverride, balloonShapeOverride, applyFlashbackStyle, reinforceWithReferenceImages, useSelectedRefsOnly, prevPageImageUrl, nextPageImageUrl, consistencyMode, preserveCharacterIds } = options;
 
       const pageIndex = rerollTarget;
       setRerollTarget(null);
@@ -2082,7 +2133,7 @@ Create a powerful, memorable conclusion that honors the user's story path.
           rerollAdjacentImages.push({ base64, label: `NEXT PAGE (page ${pageIndex + 1})` });
       }
 
-      generateSinglePage(faceId, pageIndex, type, finalInstruction || undefined, selectedRefImages.length > 0 ? selectedRefImages : undefined, allPreviousChoices.length > 0 ? allPreviousChoices : undefined, comicOverrides, useSelectedRefsOnly && selectedRefImages.length > 0, currentImage, rerollAdjacentImages.length > 0 ? rerollAdjacentImages : undefined, consistencyMode, profileOverrides.length > 0 ? profileOverrides : undefined, hasPreserveMode ? preserveCharacterIds : undefined)
+      generateSinglePage(faceId, pageIndex, type, finalInstruction || undefined, selectedRefImages.length > 0 ? selectedRefImages : undefined, allPreviousChoices.length > 0 ? allPreviousChoices : undefined, comicOverrides, useSelectedRefsOnly && selectedRefImages.length > 0, currentImage, rerollAdjacentImages.length > 0 ? rerollAdjacentImages : undefined, consistencyMode, profileOverrides.length > 0 ? profileOverrides : undefined, hasPreserveMode ? preserveCharacterIds : undefined, 'both', regenerateNarrative ? undefined : currentFace?.narrative)
           .then(() => {
               // Restore preserved choices in Novel Mode after image regeneration
               if (preservedChoices && preservedChoices.length > 0 && isNovelMode) {
@@ -2401,7 +2452,9 @@ Create a powerful, memorable conclusion that honors the user's story path.
         const face = pagesToPrint[index];
         if (index > 0) doc.addPage([PAGE_WIDTH, PAGE_HEIGHT], 'portrait');
         if (face.imageUrl) {
-            let finalImg = (face.type === 'cover' && storyContext.useOverlayLogo)
+            const coverIsSupplied = Boolean(storyContext.preGeneratedCover)
+              && face.imageUrl === storyContext.preGeneratedCover;
+            let finalImg = (face.type === 'cover' && storyContext.useOverlayLogo && !coverIsSupplied)
                 ? await compositeCover(face.imageUrl, storyContext)
                 : face.imageUrl;
 
@@ -2431,7 +2484,9 @@ Create a powerful, memorable conclusion that honors the user's story path.
       
       let downloadUrl = face.imageUrl;
       
-      if (face.type === 'cover' && storyContext.useOverlayLogo) {
+      const suppliedCoverPage = Boolean(storyContext.preGeneratedCover)
+        && face.imageUrl === storyContext.preGeneratedCover;
+      if (face.type === 'cover' && storyContext.useOverlayLogo && !suppliedCoverPage) {
           downloadUrl = await compositeCover(face.imageUrl, storyContext);
       }
       
@@ -2559,7 +2614,13 @@ Create a powerful, memorable conclusion that honors the user's story path.
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
-    setStoryContext(prev => ({ ...prev, preGeneratedCover: dataUrl }));
+    setStoryContext(prev => ({
+      ...prev,
+      preGeneratedCover: dataUrl,
+      // Your cover already has whatever title treatment you gave it. Compositing
+      // the app's logo and title over the top double-prints them.
+      useOverlayLogo: false,
+    }));
   };
 
   /** Drop a supplied cover so the next run generates one. */

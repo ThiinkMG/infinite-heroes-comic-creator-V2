@@ -178,6 +178,16 @@ export interface RerollOptions {
   /** Regeneration modes (can select multiple: full, characters_only, etc.) - undefined means default/auto */
   regenerationModes?: RegenerationMode[];
 
+  /**
+   * Rewrite the page's caption, dialogue, and choices as well as its art.
+   *
+   * Defaults to false. Rerolling used to always regenerate the beat, so asking
+   * for a better drawing silently rewrote the story — and when the new beat came
+   * back with no dialogue, the page rendered with no speech bubbles at all.
+   * Redrawing and rewriting are different requests.
+   */
+  regenerateNarrative?: boolean;
+
   /** User instruction text */
   instruction: string;
 
