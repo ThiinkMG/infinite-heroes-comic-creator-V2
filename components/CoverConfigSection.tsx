@@ -15,6 +15,8 @@ export interface CoverConfigSectionProps {
     onCoverUpload?: (file: File) => Promise<void>;
     /** Drop a supplied cover so the next run generates one. */
     onCoverRemove?: () => void;
+    /** Choose whether a supplied cover is letterboxed or cropped to fill. */
+    onCoverFitChange?: (fit: 'contain' | 'cover') => void;
     /** Current story context object */
     storyContext: StoryContext;
     /** Handler for story context updates */
@@ -28,9 +30,13 @@ export interface CoverConfigSectionProps {
 export const CoverConfigSection: React.FC<CoverConfigSectionProps> = ({
     onCoverUpload,
     onCoverRemove,
+    onCoverFitChange,
     storyContext,
     onStoryContextUpdate
 }) => {
+    // Measured from the uploaded image so the warning reflects the real file,
+    // not a guess from its filename.
+    const [coverAspect, setCoverAspect] = React.useState<number | null>(null);
     const handleLogoUpload = async (file: File) => {
         const reader = new FileReader();
         reader.onload = () => {
@@ -84,24 +90,60 @@ export const CoverConfigSection: React.FC<CoverConfigSectionProps> = ({
                                 Cover art (optional)
                             </p>
                             {storyContext.preGeneratedCover ? (
-                                <div className="flex items-center gap-2">
-                                    <img
-                                        src={storyContext.preGeneratedCover}
-                                        alt="Your supplied cover art"
-                                        className="h-16 w-auto border-2 border-black object-contain"
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                        <p className="font-ui text-[11px] text-gray-700">
-                                            Using your cover. The cover page will not be generated.
-                                        </p>
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <img
+                                            src={storyContext.preGeneratedCover}
+                                            alt="Your supplied cover art"
+                                            className="h-16 w-auto border-2 border-black object-contain"
+                                            onLoad={(e) => {
+                                                const img = e.currentTarget;
+                                                setCoverAspect(img.naturalWidth / img.naturalHeight);
+                                            }}
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="font-ui text-[11px] text-gray-700">
+                                                Using your cover. The cover page will not be generated.
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={onCoverRemove}
+                                            aria-label="Remove supplied cover art"
+                                            className="comic-btn bg-gray-200 text-black font-comic px-2 py-1 border-2 border-black uppercase text-[11px] hover:bg-gray-300"
+                                        >
+                                            Remove
+                                        </button>
                                     </div>
-                                    <button
-                                        onClick={onCoverRemove}
-                                        aria-label="Remove supplied cover art"
-                                        className="comic-btn bg-gray-200 text-black font-comic px-2 py-1 border-2 border-black uppercase text-[11px] hover:bg-gray-300"
-                                    >
-                                        Remove
-                                    </button>
+
+                                    {/* Comic pages are 2:3. Anything else has to be letterboxed or cropped. */}
+                                    {coverAspect !== null && Math.abs(coverAspect - 2 / 3) > 0.04 && (
+                                        <p className="font-ui text-[11px] text-amber-900 bg-amber-100 border border-amber-500 px-2 py-1 mt-1">
+                                            Your cover is {coverAspect > 2 / 3 ? 'wider' : 'taller'} than a comic page (2:3).
+                                            Choose how it should sit on the page.
+                                        </p>
+                                    )}
+
+                                    {onCoverFitChange && (
+                                        <fieldset className="mt-1">
+                                            <legend className="font-comic text-[10px] uppercase text-gray-600">Page fit</legend>
+                                            <div className="flex gap-2">
+                                                {([
+                                                    ['contain', 'Fit whole image'],
+                                                    ['cover', 'Fill page (crops)'],
+                                                ] as const).map(([value, label]) => (
+                                                    <label key={value} className="flex items-center gap-1 font-ui text-[11px] cursor-pointer">
+                                                        <input
+                                                            type="radio"
+                                                            name="cover-fit"
+                                                            checked={(storyContext.preGeneratedCoverFit ?? 'contain') === value}
+                                                            onChange={() => onCoverFitChange(value)}
+                                                        />
+                                                        {label}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </fieldset>
+                                    )}
                                 </div>
                             ) : (
                                 <label className="comic-btn bg-emerald-600 text-white text-xs px-2 py-1.5 hover:bg-emerald-500 cursor-pointer border-2 border-black flex items-center justify-center w-full">

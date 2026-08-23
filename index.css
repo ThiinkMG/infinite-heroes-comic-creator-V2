@@ -159,3 +159,20 @@ textarea::placeholder {
   clip: auto;
   white-space: normal;
 }
+
+
+/* ==================== SUPPLIED COVER FIT ==================== */
+/*
+  index.html forces `object-fit: cover !important` on the first page's image.
+  That is right for generated covers, which are always 2:3, and wrong for a
+  cover the user supplied at some other aspect ratio — filling crops it, usually
+  cutting the title off the top.
+
+  An inline style cannot override an !important declaration, so this needs to be
+  a rule: same selector plus one extra class, which wins on specificity.
+*/
+.paper:first-child .front .panel-image.supplied-cover-contain,
+.panel-image.supplied-cover-contain {
+  object-fit: contain !important;
+  background-color: #0a0a0a;
+}

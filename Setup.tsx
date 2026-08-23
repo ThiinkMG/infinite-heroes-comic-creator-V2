@@ -94,6 +94,8 @@ interface SetupProps {
     onCoverUpload?: (file: File) => Promise<void>;
     /** Drop a supplied cover so the next run generates one. */
     onCoverRemove?: () => void;
+    /** Choose whether a supplied cover is letterboxed or cropped to fill. */
+    onCoverFitChange?: (fit: 'contain' | 'cover') => void;
     /** True while the saved cast is still being read from storage. */
     isCastLoading?: boolean;
     /**
@@ -942,6 +944,7 @@ export const Setup: React.FC<SetupProps> = (props) => {
                             <CoverConfigSection
                                 onCoverUpload={props.onCoverUpload}
                                 onCoverRemove={props.onCoverRemove}
+                                onCoverFitChange={props.onCoverFitChange}
                                 storyContext={props.storyContext}
                                 onStoryContextUpdate={props.onStoryContextUpdate}
                             />

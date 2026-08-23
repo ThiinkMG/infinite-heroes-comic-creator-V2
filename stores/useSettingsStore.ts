@@ -77,6 +77,19 @@ export interface SettingsState {
    */
   sceneContinuityImages: boolean;
   /**
+   * Send the cover to every story page as a style and palette reference.
+   *
+   * Unlike `sceneContinuityImages`, this cannot compound drift: the cover is
+   * fixed and user-approved, so it never updates to reflect a page that came out
+   * wrong. It anchors rendering style, colour grading, and costume treatment.
+   *
+   * It is still an action shot with dramatic lighting, so it is labelled in the
+   * prompt as a style reference only — faces continue to come from the model
+   * sheets. Off by default: an extra image per page costs tokens, and it is only
+   * worth it when the cover genuinely represents the look you want.
+   */
+  useCoverAsStyleReference: boolean;
+  /**
    * Output resolution passed to the image model.
    * '1k' for drafts, '2k'/'4k' for print export (1k at 2:3 is only ~130 DPI at comic trim size).
    */
@@ -131,6 +144,7 @@ export interface SettingsActions {
   setReferenceImagePriority: (value: boolean) => void;
   setPromptMode: (value: 'v2' | 'legacy') => void;
   setSceneContinuityImages: (value: boolean) => void;
+  setUseCoverAsStyleReference: (value: boolean) => void;
   setImageResolution: (value: '1k' | '2k' | '4k') => void;
   setUseModelSheets: (value: boolean) => void;
   setQaAutoReroll: (value: boolean) => void;
@@ -170,6 +184,7 @@ const getDefaultSettings = (): SettingsState => ({
   referenceImagePriority: true,
   promptMode: 'v2',
   sceneContinuityImages: false,
+  useCoverAsStyleReference: false,
   imageResolution: '1k',
   useModelSheets: true,
   qaAutoReroll: false,   // opt-in: costs one extra vision call per page
@@ -222,6 +237,7 @@ export const useSettingsStore = create<SettingsStore>()(
       setReferenceImagePriority: (value) => set({ referenceImagePriority: value }),
       setPromptMode: (value) => set({ promptMode: value }),
       setSceneContinuityImages: (value) => set({ sceneContinuityImages: value }),
+      setUseCoverAsStyleReference: (value) => set({ useCoverAsStyleReference: value }),
       setImageResolution: (value) => set({ imageResolution: value }),
       setUseModelSheets: (value) => set({ useModelSheets: value }),
       setQaAutoReroll: (value) => set({ qaAutoReroll: value }),
@@ -277,6 +293,7 @@ export const useSettingsStore = create<SettingsStore>()(
         referenceImagePriority: state.referenceImagePriority,
         promptMode: state.promptMode,
         sceneContinuityImages: state.sceneContinuityImages,
+        useCoverAsStyleReference: state.useCoverAsStyleReference,
         imageResolution: state.imageResolution,
         useModelSheets: state.useModelSheets,
         qaAutoReroll: state.qaAutoReroll,
@@ -313,6 +330,7 @@ export const useAutoCharacterAnalysis = () => useSettingsStore((state) => state.
 export const useReferenceImagePriority = () => useSettingsStore((state) => state.referenceImagePriority);
 export const usePromptMode = () => useSettingsStore((state) => state.promptMode);
 export const useSceneContinuityImages = () => useSettingsStore((state) => state.sceneContinuityImages);
+export const useUseCoverAsStyleReference = () => useSettingsStore((state) => state.useCoverAsStyleReference);
 export const useImageResolution = () => useSettingsStore((state) => state.imageResolution);
 export const useUseModelSheets = () => useSettingsStore((state) => state.useModelSheets);
 export const useQaAutoReroll = () => useSettingsStore((state) => state.qaAutoReroll);

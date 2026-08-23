@@ -76,6 +76,12 @@ export interface V2Input {
   characters: V2Character[];
   /** Previous/adjacent pages, for background and lighting continuity only. */
   sceneContext?: Array<{ base64: string; label: string }>;
+  /**
+   * The issue's cover, as a style anchor. Kept separate from sceneContext so it
+   * can be labelled differently: the cover is approved and fixed, whereas an
+   * adjacent page may itself be off-model.
+   */
+  styleReference?: string;
   /** Existing panel being partially regenerated. */
   preserveImage?: string;
   instruction?: string;
@@ -129,6 +135,7 @@ export function buildV2Prompt(
     beat, type, storyContext, genre, characters, sceneContext, preserveImage,
     instruction, shotType, isFlashback, balloonShape, panelLayout, location,
     publisherLogo, consistencyStrength, compact, suppressCastImages = false,
+    styleReference,
   } = input;
 
   const contents: PromptPart[] = [];
@@ -214,6 +221,15 @@ export function buildV2Prompt(
   // 3. Scene-continuity images. Explicitly scoped away from faces so they do not
   //    compete with the cast references above.
   // --------------------------------------------------------------------------
+  if (styleReference && type === 'story') {
+    push(
+      `\nSTYLE REFERENCE — this issue's cover. Match its rendering style, colour ` +
+      `grading, line weight, and costume treatment. Do NOT take faces, poses, or ` +
+      `composition from it; faces come from the CAST references above.`
+    );
+    pushImage(styleReference);
+  }
+
   if (sceneContext?.length) {
     push(
       `\nCONTINUITY REFERENCES — for background, palette, and lighting only. ` +

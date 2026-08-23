@@ -88,6 +88,8 @@ export interface GenerateImageParams {
   profileOverrides?: CharacterProfile[];
   /** Character IDs to preserve from currentImageToPreserve reference */
   preserveCharacterIds?: string[];
+  /** The issue's cover, used as a style anchor when the setting is enabled. */
+  coverImage?: string;
 }
 
 /** Result from image generation */
@@ -235,6 +237,7 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
       imageResolution = '1k',
       useModelSheets = true,
       sceneContinuityImages = false,
+      useCoverAsStyleReference = false,
     } = useSettingsStore.getState();
     // Feature F: consistencyMode forces maximum strength for this generation call
     const consistencyStrength = consistencyMode ? 1.0 : (useSettingsStore.getState().consistencyStrength ?? 1.0);
@@ -428,6 +431,9 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
         characters: ordered.map(toV2),
         suppressCastImages: Boolean(useOnlySelectedRefs && extraRefImages?.length),
         sceneContext: sceneCtx.length ? sceneCtx : undefined,
+        // The cover is approved and never changes, so unlike an adjacent page it
+        // cannot drag later pages off-model.
+        styleReference: useCoverAsStyleReference ? params.coverImage : undefined,
         preserveImage: currentImageToPreserve,
         instruction,
         shotType: comicOverrides?.shotTypeOverride || v2PagePlan?.suggestedShot,

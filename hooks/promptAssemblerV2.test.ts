@@ -303,6 +303,39 @@ describe('buildV2Prompt — reroll paths', () => {
   });
 });
 
+describe('buildV2Prompt — cover as style reference', () => {
+  it('labels the cover for style only, never for faces', () => {
+    const { promptText, contents } = buildV2Prompt(input({ styleReference: 'COVER' }), mime);
+    expect(promptText).toContain('STYLE REFERENCE');
+    // The whole point: it must not become a face source, which is what made
+    // previous-page images compound drift across an issue.
+    expect(promptText).toContain('Do NOT take faces, poses, or composition from it');
+    expect(contents.filter(c => 'inlineData' in c)).toHaveLength(2); // portrait + cover
+  });
+
+  it('is omitted when not supplied', () => {
+    const { promptText } = buildV2Prompt(input(), mime);
+    expect(promptText).not.toContain('STYLE REFERENCE');
+  });
+
+  it('is not sent on the cover itself', () => {
+    // Using the cover as a reference for drawing the cover is circular.
+    const { promptText } = buildV2Prompt(input({ type: 'cover', styleReference: 'COVER' }), mime);
+    expect(promptText).not.toContain('STYLE REFERENCE');
+  });
+
+  it('stays distinct from continuity references', () => {
+    const { promptText } = buildV2Prompt(input({
+      styleReference: 'COVER',
+      sceneContext: [{ base64: 'PREV', label: 'Previous page:' }],
+    }), mime);
+    // Two different kinds of reference with two different contracts; conflating
+    // them is what let a drifted page pass itself off as a style anchor.
+    expect(promptText).toContain('STYLE REFERENCE');
+    expect(promptText).toContain('CONTINUITY REFERENCES');
+  });
+});
+
 describe('buildV2Prompt — page types', () => {
   it('suppresses all lettering on an overlay cover', () => {
     const { promptText } = buildV2Prompt(input({

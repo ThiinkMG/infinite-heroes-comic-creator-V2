@@ -301,6 +301,16 @@ export interface StoryContext {
    * Stored as a full data URL so it can be rendered and exported unchanged.
    */
   preGeneratedCover?: string;
+  /**
+   * How a supplied cover is fitted to the 2:3 page.
+   *
+   * Generated covers are always 2:3, so the reader could safely force
+   * object-fit: cover on them. A supplied cover is whatever shape the user has,
+   * and filling crops it — usually taking the title off the top. Defaults to
+   * 'contain' so nothing is lost; 'cover' is available for anyone who would
+   * rather fill the page and accept the crop.
+   */
+  preGeneratedCoverFit?: 'contain' | 'cover';
 }
 
 /**

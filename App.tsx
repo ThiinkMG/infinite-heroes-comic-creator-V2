@@ -898,6 +898,8 @@ const App: React.FC = () => {
       consistencyMode,
       profileOverrides,
       preserveCharacterIds,
+      // The cover doubles as a style anchor when useCoverAsStyleReference is on.
+      coverImage: comicFaces.find(cf => cf.type === 'cover')?.imageUrl,
       storyContext,
       storyOutline,
     });
@@ -2562,7 +2564,12 @@ Create a powerful, memorable conclusion that honors the user's story path.
 
   /** Drop a supplied cover so the next run generates one. */
   const handleCoverRemove = () => {
-    setStoryContext(prev => ({ ...prev, preGeneratedCover: undefined }));
+    setStoryContext(prev => ({ ...prev, preGeneratedCover: undefined, preGeneratedCoverFit: undefined }));
+  };
+
+  /** Letterbox the supplied cover, or crop it to fill the page. */
+  const handleCoverFitChange = (fit: 'contain' | 'cover') => {
+    setStoryContext(prev => ({ ...prev, preGeneratedCoverFit: fit }));
   };
 
   const handleEmblemUpload = async (id: string, file: File) => {
@@ -3392,6 +3399,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           modelSheetProps={modelSheetProps}
           onCoverUpload={handleCoverUpload}
           onCoverRemove={handleCoverRemove}
+          onCoverFitChange={handleCoverFitChange}
           isCastLoading={isCastLoading}
           resumablePageCount={resumablePageCount}
           onResumeComic={handleResumeComic}

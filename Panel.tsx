@@ -41,6 +41,11 @@ export const Panel: React.FC<PanelProps> = ({ face, allFaces, storyContext, gene
     if (face.isLoading && !face.imageUrl) return <LoadingFX />;
     
     const isFullBleed = face.type === 'cover' || face.type === 'back_cover';
+    // True when this page is showing artwork the user supplied rather than
+    // artwork the model produced at the page's own aspect ratio.
+    const isSuppliedCover = face.type === 'cover'
+        && Boolean(storyContext.preGeneratedCover)
+        && face.imageUrl === storyContext.preGeneratedCover;
     const hasFailed = face.hasFailed === true;
 
     // In Novel Mode, only show decision overlay on the MOST RECENT unresolved decision page
@@ -67,7 +72,13 @@ export const Panel: React.FC<PanelProps> = ({ face, allFaces, storyContext, gene
                         friend: useCharacterStore.getState().friend,
                         others: useCharacterStore.getState().additionalCharacters,
                     })}
-                    className={`panel-image ${isFullBleed ? '!object-cover' : ''}`}
+                    // A supplied cover keeps its own aspect ratio unless the user
+                    // asks for it to fill the page; a generated cover is already 2:3.
+                    className={`panel-image ${isFullBleed ? '!object-cover' : ''}${
+                        isSuppliedCover && storyContext.preGeneratedCoverFit !== 'cover'
+                            ? ' supplied-cover-contain'
+                            : ''
+                    }`}
                 />
             )}
             
