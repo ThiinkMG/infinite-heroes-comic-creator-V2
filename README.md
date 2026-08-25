@@ -1,24 +1,55 @@
-# Infinite Heroes: AI-Powered Comic Creator 🦸‍♂️💥📖
+# Infinite Heroes V2: AI-Powered Comic Creator 🦸‍♂️💥📖
 
 > **Transform your imagination into stunning comic book adventures!**
 
-[![Live Demo](https://img.shields.io/badge/🚀_Try_It_Now-Live_Demo-blue?style=for-the-badge)](https://infinite-heroes-comic-creator.vercel.app/)
+[![Live Demo](https://img.shields.io/badge/🚀_Try_It_Now-Live_Demo-blue?style=for-the-badge)](https://thiinkmg.github.io/infinite-heroes-comic-creator-V2/)
 [![Powered by Gemini](https://img.shields.io/badge/Powered_by-Google_Gemini-4285F4?style=for-the-badge&logo=google)](https://ai.google.dev/)
+[![Claude](https://img.shields.io/badge/Writing_by-Claude-D97757?style=for-the-badge)](https://www.anthropic.com/)
 
-**Infinite Heroes** is your personal AI comic studio! Using Google's cutting-edge Gemini AI, create complete comic books with consistent characters, dynamic storytelling, and professional-quality art—all from your browser.
+**Infinite Heroes** is your personal AI comic studio. Claude writes the story, Gemini draws it, and a model-sheet pipeline keeps your characters recognisable from the cover to the last page.
 
-🎮 **[Try the Live Demo](https://infinite-heroes-comic-creator.vercel.app/)** — No installation required!
+🎮 **[Try the Live Demo](https://thiinkmg.github.io/infinite-heroes-comic-creator-V2/)** — bring your own Google AI Studio key, no installation required.
+
+---
+
+## 🆕 What's New in V2
+
+V2 is a rebuild of how the app keeps characters consistent, plus a long pass over the things that were built but never reachable.
+
+### Character consistency
+
+- **Character model sheets.** Each character is drawn once as a turnaround — front, three-quarter, profile, plus expression studies — in your chosen art style. Every page then copies that sheet instead of re-interpreting your original photo. Style transfer is solved once rather than re-rolled on every page, which was the single largest source of face drift.
+- **Rewritten prompt engine.** Every visual fact about a character is now stated exactly once, next to that character's reference image. The previous builder restated the same face, hair, and skin values across 8–14 differently-worded blocks per request, which spent the model's attention reconciling near-duplicates instead of drawing the scene.
+- **Structured art direction.** The writer emits subject, action, setting, camera, and lighting as separate fields rather than prose that then had to be parsed.
+- **Attribute locking.** Pin a character's face, costume, emblem, or weapon and it is enforced as a hard constraint on every page.
+- **Optional visual QA.** After each page, a vision model scores the render against the character's reference and can reroll once with a targeted correction.
+
+### Lettering and layout
+
+- **Speech bubble editor** — place, drag, resize, and retype bubbles by hand. Six shapes, tail control, per-character assignment.
+- **SFX editor** — place and scale sound effects from a library.
+- Both are composited into PDF and image export, so what you see is what you get.
+
+### Practical
+
+- **Bring your own cover** — upload existing key art and skip generating one.
+- **Session restore** — reload any recent comic from the setup screen.
+- **Zipped exports** — one archive instead of a burst of separate downloads.
+- **Print-aware export** — comic trim size, CMYK conversion, and resolution options.
+- **Accessibility** — real alt text drawn from each page's narrative, a full text reading mode, live progress announcements, and keyboard-reachable controls.
 
 ---
 
 ## ✨ What Makes It Special?
 
-🎨 **AI-Generated Art** — Every panel is a unique masterpiece
-🦸 **Character Consistency** — Your heroes look the same on every page
-📖 **Two Story Modes** — Interactive choices OR automated full-comic generation
-🌍 **Multiple Languages** — Create comics in English, Spanish, French & more
+🎨 **AI-Generated Art** — Every panel drawn by Gemini 3 Pro Image
+🦸 **Character Model Sheets** — Turnarounds keep your heroes on-model across the issue
+🔒 **Attribute Locking** — Pin a face, costume, emblem, or weapon and it stays put
+💬 **Hand Lettering** — Fix bubbles and SFX yourself instead of rerolling the page
+📖 **Two Story Modes** — Interactive choices, or a full comic from an outline
+🌍 **Multiple Languages** — English, Spanish, French, and more
 📱 **Mobile Friendly** — Create on any device
-📥 **Export Ready** — Download as PDF or individual images
+📥 **Print-Ready Export** — PDF at comic trim size, CMYK, or a zip of images
 
 ---
 
@@ -213,3 +244,44 @@ Apache 2.0 — See [LICENSE](LICENSE) for details.
 ---
 
 *Built with React, Vite, TypeScript, and ❤️ for comic book lovers everywhere.*
+
+
+---
+
+## 🔑 Using the Live Demo
+
+The demo build ships with **no API keys**. On first use it asks for your own
+Google AI Studio key, which is stored only in your browser's local storage and
+sent only to Google.
+
+Get a free key at [aistudio.google.com](https://aistudio.google.com/app/apikey).
+
+An Anthropic key is optional. With one, Claude writes the story beats, outlines,
+and character profiles; without one, Gemini handles the writing too.
+
+## 🏗️ Running It Yourself
+
+```bash
+npm install
+cp .env.example .env.local   # add your GEMINI_API_KEY
+npm run dev
+```
+
+```bash
+npm run lint    # TypeScript
+npm test        # unit tests
+npm run build   # production build
+```
+
+> **Note on keys and deployment.** Vite inlines `process.env` values into the
+> built JavaScript, so a normal build embeds whatever is in `.env.local`. That is
+> fine locally. For any public deployment, build with `DEMO_BUILD=1`, which
+> suppresses every secret and lets visitors supply their own key.
+
+## 📦 Version History
+
+**V2** — this repository. Model sheets, rewritten prompt engine, lettering
+editors, session restore, and an accessibility pass.
+
+**V1** — [infinite-heroes-comic-creator](https://github.com/ThiinkMG/infinite-heroes-comic-creator),
+kept for reference.
