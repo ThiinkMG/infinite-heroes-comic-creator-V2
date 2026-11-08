@@ -16,6 +16,8 @@ export interface PublisherInfo {
   issueNumber: string;
 }
 
+export type ProfileMode = 'reuse' | 'analyze' | 'manual';
+
 export interface SettingsState {
   // Story settings
   selectedGenre: string;
@@ -34,7 +36,16 @@ export interface SettingsState {
 
   // Mode settings
   generateFromOutline: boolean;
-  skipProfileAnalysis: boolean;
+  /**
+   * How character profiles are prepared when a run starts. One setting replaces
+   * three overlapping toggles ("Use Saved Profiles", "Skip Analysis", and
+   * "Auto Character Analysis" in Settings), which described the same decision.
+   *  - 'reuse'   reuse saved profiles that still match the character; analyse
+   *              new or edited characters (default)
+   *  - 'analyze' re-analyse everyone and review the result
+   *  - 'manual'  no AI analysis; write the profiles yourself
+   */
+  profileMode: ProfileMode;
 
   // UI settings
   showApiCostEstimate: boolean;
@@ -50,11 +61,6 @@ export interface SettingsState {
    * Default: 2 (every other page). Range: 1–5.
    */
   reAnchorEveryN: number;
-  /**
-   * Automatically run AI character analysis pass on portrait upload.
-   * When false, generation proceeds without profile analysis (faster but less consistent).
-   */
-  autoCharacterAnalysis: boolean;
   /**
    * When true, uploaded reference images are weighted more heavily than text descriptions.
    * Portraits appear last in the content array (highest weight position).
@@ -130,11 +136,10 @@ export interface SettingsActions {
   setSelectedArtStyle: (artStyle: string) => void;
   setPublisherInfo: (info: Partial<PublisherInfo>) => void;
   setGenerateFromOutline: (value: boolean) => void;
-  setSkipProfileAnalysis: (value: boolean) => void;
+  setProfileMode: (mode: ProfileMode) => void;
   setShowApiCostEstimate: (value: boolean) => void;
   setConsistencyStrength: (value: number) => void;
   setReAnchorEveryN: (value: number) => void;
-  setAutoCharacterAnalysis: (value: boolean) => void;
   setReferenceImagePriority: (value: boolean) => void;
   setPromptMode: (value: 'v2' | 'legacy') => void;
   setSceneContinuityImages: (value: boolean) => void;
@@ -166,11 +171,10 @@ const getDefaultSettings = (): SettingsState => ({
     issueNumber: '1',
   },
   generateFromOutline: true, // Outline Mode by default
-  skipProfileAnalysis: false,
+  profileMode: 'reuse',
   showApiCostEstimate: true, // Show by default
   consistencyStrength: 1.0,  // Maximum consistency by default
   reAnchorEveryN: 2,         // Re-inject full reference every 2 pages
-  autoCharacterAnalysis: true,
   referenceImagePriority: true,
   promptMode: 'v2',
   sceneContinuityImages: false,
@@ -187,6 +191,22 @@ const getDefaultSettings = (): SettingsState => ({
 // ============================================================================
 
 const STORAGE_KEY = 'infinite-heroes-settings';
+
+/**
+ * Merges saved settings over the defaults. Saved settings from before
+ * profileMode existed: anyone who had turned analysis off (either old toggle)
+ * keeps that preference as 'manual'.
+ */
+export const mergePersistedSettings = <T extends SettingsState>(persisted: unknown, current: T): T => {
+  const saved = (persisted ?? {}) as Partial<SettingsState> & {
+    skipProfileAnalysis?: boolean;
+    autoCharacterAnalysis?: boolean;
+  };
+  const { skipProfileAnalysis, autoCharacterAnalysis, ...rest } = saved;
+  const profileMode: ProfileMode = rest.profileMode
+    ?? (skipProfileAnalysis === true || autoCharacterAnalysis === false ? 'manual' : 'reuse');
+  return { ...current, ...rest, profileMode };
+};
 
 export const useSettingsStore = create<SettingsStore>()(
   persist(
@@ -209,18 +229,13 @@ export const useSettingsStore = create<SettingsStore>()(
 
       setGenerateFromOutline: (value) => set({ generateFromOutline: value }),
 
-      setSkipProfileAnalysis: (value) => set({ skipProfileAnalysis: value }),
+      setProfileMode: (mode) => set({ profileMode: mode }),
 
       setShowApiCostEstimate: (value) => set({ showApiCostEstimate: value }),
 
       setConsistencyStrength: (value) => set({ consistencyStrength: Math.max(0.3, Math.min(1.0, value)) }),
 
       setReAnchorEveryN: (value) => set({ reAnchorEveryN: Math.max(1, Math.min(5, Math.round(value))) }),
-
-      setAutoCharacterAnalysis: (value) => set({
-        autoCharacterAnalysis: value,
-        skipProfileAnalysis: !value, // Keep in sync with legacy field
-      }),
 
       setReferenceImagePriority: (value) => set({ referenceImagePriority: value }),
       setPromptMode: (value) => set({ promptMode: value }),
@@ -257,6 +272,7 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: STORAGE_KEY,
+      merge: (persisted, current) => mergePersistedSettings(persisted, current),
       // Only persist specific fields (not actions)
       partialize: (state) => ({
         selectedGenre: state.selectedGenre,
@@ -265,11 +281,10 @@ export const useSettingsStore = create<SettingsStore>()(
         selectedArtStyle: state.selectedArtStyle,
         publisherInfo: state.publisherInfo,
         generateFromOutline: state.generateFromOutline,
-        skipProfileAnalysis: state.skipProfileAnalysis,
+        profileMode: state.profileMode,
         showApiCostEstimate: state.showApiCostEstimate,
         consistencyStrength: state.consistencyStrength,
         reAnchorEveryN: state.reAnchorEveryN,
-        autoCharacterAnalysis: state.autoCharacterAnalysis,
         referenceImagePriority: state.referenceImagePriority,
         promptMode: state.promptMode,
         sceneContinuityImages: state.sceneContinuityImages,
@@ -294,7 +309,7 @@ export const useSelectedLanguage = () => useSettingsStore((state) => state.selec
 export const useSelectedArtStyle = () => useSettingsStore((state) => state.selectedArtStyle);
 export const usePublisherInfo = () => useSettingsStore((state) => state.publisherInfo);
 export const useGenerateFromOutline = () => useSettingsStore((state) => state.generateFromOutline);
-export const useSkipProfileAnalysis = () => useSettingsStore((state) => state.skipProfileAnalysis);
+export const useProfileMode = () => useSettingsStore((state) => state.profileMode);
 
 // Computed selector for novel mode (inverse of generateFromOutline)
 export const useIsNovelMode = () => useSettingsStore((state) => !state.generateFromOutline);
@@ -305,7 +320,6 @@ export const useShowApiCostEstimate = () => useSettingsStore((state) => state.sh
 // Consistency settings selectors (Feature E)
 export const useConsistencyStrength = () => useSettingsStore((state) => state.consistencyStrength);
 export const useReAnchorEveryN = () => useSettingsStore((state) => state.reAnchorEveryN);
-export const useAutoCharacterAnalysis = () => useSettingsStore((state) => state.autoCharacterAnalysis);
 export const useReferenceImagePriority = () => useSettingsStore((state) => state.referenceImagePriority);
 export const usePromptMode = () => useSettingsStore((state) => state.promptMode);
 export const useSceneContinuityImages = () => useSettingsStore((state) => state.sceneContinuityImages);

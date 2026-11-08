@@ -4,7 +4,8 @@
  */
 
 import React from 'react';
-import { GENRES, LANGUAGES, ART_STYLES, PAGE_LENGTHS, StoryContext } from '../types';
+import { GENRES, LANGUAGES, ART_STYLES, PAGE_LENGTHS, TONES, StoryContext } from '../types';
+import { TONE_AUTO, resolveTone, toneLabel } from '../utils/storyBrief';
 
 /**
  * Props for the StorySettingsSection component.
@@ -60,6 +61,21 @@ export const StorySettingsSection: React.FC<StorySettingsSectionProps> = ({
                         aria-label="Genre"
                     >
                         {GENRES.map(g => <option key={g} value={g} className="text-black">{g}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <p className="font-comic text-xs mb-1 font-bold text-gray-800 uppercase">TONE</p>
+                    <select
+                        value={storyContext.tone || TONE_AUTO}
+                        onChange={(e) => onStoryContextUpdate({ tone: e.target.value })}
+                        className="w-full font-comic text-sm p-1 border-2 border-black uppercase bg-white text-black cursor-pointer shadow-[2px_2px_0px_rgba(0,0,0,0.1)]"
+                        aria-label="Tone"
+                        title="How the dialogue and captions sound. Auto picks a tone that suits the genre."
+                    >
+                        <option value={TONE_AUTO} className="text-black">
+                            {`Auto (${toneLabel(resolveTone(selectedGenre, TONE_AUTO))})`}
+                        </option>
+                        {TONES.map(t => <option key={t} value={t} className="text-black">{toneLabel(t)}</option>)}
                     </select>
                 </div>
                 <div>

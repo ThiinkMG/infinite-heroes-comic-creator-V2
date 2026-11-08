@@ -26,6 +26,7 @@ import {
 } from '../types';
 import { detectImageMimeType } from '../claudeHelpers';
 import { buildV2Prompt, type V2Character } from './promptAssemblerV2';
+import { hasValidModelSheet } from './useGenerateModelSheet';
 import { recordGenerationTime } from '../utils/timeEstimation';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
@@ -378,7 +379,7 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
         const wpn = getWeaponDesc(persona);
         // A model sheet already rendered in the target style beats a raw photo:
         // style transfer is solved once instead of re-solved on every page.
-        const sheet = useModelSheets && persona.modelSheetStyle === storyContext.artStyle
+        const sheet = useModelSheets && hasValidModelSheet(persona, storyContext.artStyle)
           ? persona.modelSheet
           : undefined;
         return {
@@ -753,7 +754,7 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
       if (storyContext.useOverlayLogo) {
         promptText += `TYPE: Comic Cover Art. Dynamic action shot of HERO. LEAVE ROOM AT TOP FOR LOGO OVERLAY. DO NOT DRAW TEXT/LOGOS.`;
       } else {
-        promptText += `TYPE: Comic Cover. SERIES: "${storyContext.seriesTitle.toUpperCase()}". TITLE: "${storyContext.title || 'Untitled'}". PUBLISHER: "${storyContext.publisherName.toUpperCase()}". ISSUE: #${storyContext.issueNumber || '1'}. Draw titles prominently. Dynamic action shot of HERO.`;
+        promptText += `TYPE: Comic Cover. SERIES: "${storyContext.seriesTitle.toUpperCase()}". TITLE: "${storyContext.title || 'Untitled'}". ${storyContext.publisherName?.trim() ? `PUBLISHER: "${storyContext.publisherName.trim().toUpperCase()}". ` : ''}ISSUE: #${storyContext.issueNumber || '1'}. Draw titles prominently. Dynamic action shot of HERO.`;
       }
     } else if (type === 'back_cover') {
       promptText += `TYPE: Back Cover. FULL PAGE ART. Dramatic teaser. Text: "NEXT ISSUE SOON".`;

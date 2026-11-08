@@ -31,12 +31,6 @@ export interface CharacterState {
    * Built once at session start from Persona + CharacterProfile.
    */
   characterReferences: Map<string, CharacterReferenceObject>;
-  /**
-   * Session-only set of character IDs whose portrait was updated since their
-   * last profile analysis. Cleared per-character when the profile is re-analyzed.
-   * NOT persisted — resets on page refresh.
-   */
-  staledProfileIds: Set<string>;
 }
 
 export interface CharacterActions {
@@ -70,9 +64,6 @@ export interface CharacterActions {
   getCharacterLock: (id: string) => CharacterLockState;
   clearCharacterLocks: () => void;
 
-  // Stale profile flag actions (V6 Phase 5.2)
-  markProfileStale: (characterId: string) => void;
-  clearProfileStale: (characterId: string) => void;
 
   // Character reference actions (Feature A)
   setCharacterReference: (id: string, ref: CharacterReferenceObject) => void;
@@ -112,7 +103,6 @@ const initialState: CharacterState = {
   characterProfiles: new Map(),
   characterLocks: new Map(),
   characterReferences: new Map(),
-  staledProfileIds: new Set(),
 };
 
 // ============================================================================
@@ -299,26 +289,6 @@ export const useCharacterStore = create<CharacterStore>()(
   },
 
   // -------------------------------------------------------------------------
-  // STALE PROFILE FLAG ACTIONS (V6 Phase 5.2)
-  // -------------------------------------------------------------------------
-
-  markProfileStale: (characterId: string) => {
-    set((state) => {
-      const next = new Set(state.staledProfileIds);
-      next.add(characterId);
-      return { staledProfileIds: next };
-    });
-  },
-
-  clearProfileStale: (characterId: string) => {
-    set((state) => {
-      const next = new Set(state.staledProfileIds);
-      next.delete(characterId);
-      return { staledProfileIds: next };
-    });
-  },
-
-  // -------------------------------------------------------------------------
   // CHARACTER REFERENCE ACTIONS (Feature A)
   // -------------------------------------------------------------------------
 
@@ -358,7 +328,6 @@ export const useCharacterStore = create<CharacterStore>()(
       characterProfiles: new Map(),
       characterLocks: new Map(),
       characterReferences: new Map(),
-      staledProfileIds: new Set(),
     });
   },
 

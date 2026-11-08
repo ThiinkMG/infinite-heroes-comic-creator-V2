@@ -258,6 +258,11 @@ export interface Persona {
   id: string;
   name: string;
   base64: string; // The generated or uploaded portrait
+  /**
+   * @deprecated Legacy field. It only ever held placeholders ("Main Hero",
+   * "Sidekick"), which leaked into prompts. The description the user edits is
+   * `backstoryText`. Kept so older saved casts still load; never read it.
+   */
   desc: string;
   referenceImage?: string; // Legacy single reference image base64
   referenceImages?: string[]; // Multiple reference images
@@ -310,6 +315,12 @@ export interface Persona {
    * something the app cannot recreate.
    */
   modelSheetSource?: 'generated' | 'uploaded';
+  /**
+   * visualFingerprint() of the character when the sheet was made. If the
+   * portrait, refs, emblem or weapon change afterwards, a generated sheet is out
+   * of date. See utils/characterFingerprint.ts.
+   */
+  modelSheetFingerprint?: string;
 }
 
 /**
@@ -335,6 +346,12 @@ export interface StoryContext {
   useOverlayLogo: boolean;
   artStyle: string;
   pageLength: number;
+  /**
+   * One of TONES, or 'auto' (the default) to take the genre's tone. See
+   * utils/storyBrief.ts. Lives here rather than in separate state so it is saved
+   * with drafts and both writers read the same value.
+   */
+  tone?: string;
   publisherLogoBgColor?: string;
   publisherLogoFit?: 'cover' | 'contain';
   /**
@@ -544,6 +561,18 @@ export interface CharacterProfile {
   };
   /** Weapon description if character has a signature weapon */
   weaponDescription?: string;
+  /**
+   * profileFingerprint() of the character this profile describes. If the
+   * character changes, the profile is out of date and is re-analysed instead of
+   * reused. See utils/characterFingerprint.ts.
+   */
+  sourceFingerprint?: string;
+  /**
+   * Set on the blank profile returned when analysis failed (API error), so the
+   * launch flow can flag that character instead of silently generating from an
+   * empty description.
+   */
+  analysisFailed?: boolean;
 
   // === 4-Layer Consistency System Fields ===
   /** Structured identity header for Layer 2 prompt injection */

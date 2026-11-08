@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Persona, StoryContext, ART_STYLES, GENRES } from './types';
+import { Persona, StoryContext, ART_STYLES, GENRES, isCastMember } from './types';
 import { ModelSheetStrip, type ModelSheetState } from './components/ModelSheetStrip';
 import { ComicPreset } from './data/comicPresets';
 import {
@@ -25,6 +25,7 @@ import { TutorialPage } from './components/TutorialPage';
 import { UndoRedoButtons } from './components/UndoRedoButtons';
 import { useUndoHistory } from './hooks/useUndoHistory';
 import { useSessionHistoryStore, SessionEntry } from './stores/useSessionHistoryStore';
+import { useSettingsStore, type ProfileMode } from './stores/useSettingsStore';
 
 /**
  * Props for the Setup component.
@@ -80,11 +81,6 @@ interface SetupProps {
     onImportDraft: (file: File) => void;
     onClearSetup: () => void;
     onImproveText?: (text: string, context?: string, purpose?: 'story_description' | 'regeneration_instruction' | 'backstory') => Promise<string>;
-    skipProfileAnalysis?: boolean;
-    onSkipProfileAnalysisChange?: (val: boolean) => void;
-    useSavedProfiles?: boolean;
-    onUseSavedProfilesChange?: (val: boolean) => void;
-    hasStaleSavedProfiles?: boolean;
     onPresetSelect?: (preset: ComicPreset) => void;
     onSettingsOpen?: () => void;
     /**
@@ -162,6 +158,8 @@ interface ValidationErrors {
  * Allows users to configure hero/co-star characters, story context, and generation options.
  */
 export const Setup: React.FC<SetupProps> = (props) => {
+    const profileMode = useSettingsStore(s => s.profileMode);
+    const setProfileMode = useSettingsStore(s => s.setProfileMode);
     const [showTutorial, setShowTutorial] = useState(false);
     const [showTutorialPage, setShowTutorialPage] = useState(false);
     const [isImprovingStory, setIsImprovingStory] = useState(false);
@@ -985,39 +983,20 @@ export const Setup: React.FC<SetupProps> = (props) => {
                                 <Tooltip text="Uses longer, descriptive captions and deep internal monologues." />
                             </label>
 
-                            {props.onUseSavedProfilesChange && (
-                                <label className={`flex items-center gap-1.5 font-comic text-xs cursor-pointer transition-colors touch-manipulation whitespace-nowrap ${props.skipProfileAnalysis ? 'opacity-40' : 'text-green-700 hover:text-green-900'}`}>
-                                    <input
-                                        type="checkbox"
-                                        checked={props.useSavedProfiles ?? true}
-                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.onUseSavedProfilesChange?.(e.target.checked)}
-                                        className="w-4 h-4 accent-green-600 shrink-0"
-                                        aria-label="Use saved character profiles"
-                                        disabled={props.skipProfileAnalysis}
-                                    />
-                                    <span>💾 Use Saved Profiles</span>
-                                    <Tooltip text="Reuses saved character analysis. Auto-generates missing profiles." />
-                                </label>
-                            )}
-                            {props.useSavedProfiles && props.hasStaleSavedProfiles && (
-                                <p className="font-comic text-[10px] text-amber-700 font-bold mt-0.5">
-                                    Some saved profiles are &gt;24h old — consider re-analyzing.
-                                </p>
-                            )}
-
-                            {props.onSkipProfileAnalysisChange && (
-                                <label className="flex items-center gap-1.5 font-comic text-xs cursor-pointer text-purple-700 hover:text-purple-900 transition-colors touch-manipulation whitespace-nowrap">
-                                    <input
-                                        type="checkbox"
-                                        checked={props.skipProfileAnalysis || false}
-                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.onSkipProfileAnalysisChange?.(e.target.checked)}
-                                        className="w-4 h-4 accent-purple-600 shrink-0"
-                                        aria-label="Skip AI pre-analysis"
-                                    />
-                                    <span>🎯 Skip Analysis</span>
-                                    <Tooltip text="Skip AI portrait analysis. Fill in profiles manually." />
-                                </label>
-                            )}
+                            <label className="flex items-center gap-1.5 font-comic text-xs text-green-800 whitespace-nowrap">
+                                <span>🧬 Profiles:</span>
+                                <select
+                                    value={profileMode}
+                                    onChange={(e) => setProfileMode(e.target.value as ProfileMode)}
+                                    className="font-comic text-xs border-2 border-black bg-white px-1 py-0.5 cursor-pointer"
+                                    aria-label="How character profiles are prepared"
+                                >
+                                    <option value="reuse">Reuse saved</option>
+                                    <option value="analyze">Re-analyse all</option>
+                                    <option value="manual">Write my own</option>
+                                </select>
+                                <Tooltip text="Reuse saved: keeps profiles that still match each character and analyses new or edited ones. Re-analyse all: fresh AI analysis for everyone. Write my own: no AI analysis, you fill in the profiles." />
+                            </label>
                         </div>
 
                         {/* Right: Cost Estimate */}
@@ -1026,7 +1005,7 @@ export const Setup: React.FC<SetupProps> = (props) => {
                             characterCount={
                                 (props.hero ? 1 : 0) +
                                 (props.friend ? 1 : 0) +
-                                props.additionalCharacters.length
+                                props.additionalCharacters.filter(isCastMember).length
                             }
                             isOutlineMode={true}
                             showBreakdown={false}

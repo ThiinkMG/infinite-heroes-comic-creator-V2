@@ -29,6 +29,7 @@ import {
   formatCanonicalCharacter,
 } from '../types';
 import { detectImageMimeType } from '../claudeHelpers';
+import { isModelSheetOutdated } from '../utils/characterFingerprint';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import { useMetricsStore } from '../stores/useMetricsStore';
 
@@ -60,9 +61,17 @@ export interface ModelSheetResult {
 /**
  * True when a persona's stored model sheet is usable for the given art style.
  * Sheets are style-specific: a noir sheet is worse than useless for manga pages.
+ *
+ * The single rule for which sheet a page may use. The image assembler, the
+ * casting strip, "generate all" and the cost dialog all call this, rather than
+ * each keeping its own copy of the check (they used to, and only compared style).
  */
 export const hasValidModelSheet = (persona: Persona, artStyle: string): boolean =>
-  Boolean(persona.modelSheet) && persona.modelSheetStyle === artStyle;
+  Boolean(persona.modelSheet) &&
+  persona.modelSheetStyle === artStyle &&
+  // A generated sheet drawn from an older portrait shows the old face. Uploaded
+  // sheets are the user's own art and stay authoritative.
+  (persona.modelSheetSource === 'uploaded' || !isModelSheetOutdated(persona));
 
 export const useGenerateModelSheet = (config: GenerateModelSheetConfig) => {
   const { getAI, onAPIError } = config;
@@ -128,7 +137,11 @@ export const useGenerateModelSheet = (config: GenerateModelSheetConfig) => {
     // ---- The brief -----------------------------------------------------------
     const descriptor = profile
       ? formatCanonicalCharacter(profile, persona.role || undefined)
-      : `${name.toUpperCase()}${persona.desc ? ` — ${persona.desc}` : ''}`;
+      // No profile yet (sheet made from Setup before analysis): use what the
+      // user wrote. This used to read `desc`, which only ever held placeholders
+      // like "Main Hero", so the sheet ignored the description entirely.
+      // Clipped because a long backstory is mostly plot, not appearance.
+      : `${name.toUpperCase()}${persona.backstoryText?.trim() ? ` — ${persona.backstoryText.trim().slice(0, 600)}` : ''}`;
 
     const promptText = [
       `Draw a CHARACTER MODEL SHEET for ${name}, in ${artStyle} style.`,

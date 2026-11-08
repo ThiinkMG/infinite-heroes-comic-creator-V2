@@ -32,6 +32,13 @@ interface Props {
   plan: GenerationPlan;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * Generate the missing model sheets, then start. Offered as the primary
+   * action when sheets are missing: Settings calls them the single biggest
+   * factor for consistent faces, yet the run used to start without them unless
+   * the user had gone back to the setup screen to make them first.
+   */
+  onConfirmWithSheets?: () => void;
 }
 
 /**
@@ -48,13 +55,14 @@ const estimateTime = (pageCount: number, qaEnabled: boolean): { label: string; l
   return { label: formatTimeRemaining(withQa), learned: hasReliableEstimates() };
 };
 
-export const GenerationConfirmDialog: React.FC<Props> = ({ plan, onConfirm, onCancel }) => {
+export const GenerationConfirmDialog: React.FC<Props> = ({ plan, onConfirm, onCancel, onConfirmWithSheets }) => {
   const confirmRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   const cost = estimateGenerationCost(plan.pageCount, plan.characterCount, plan.isOutlineMode);
   const time = estimateTime(plan.pageCount, plan.qaEnabled);
   const totalImages = plan.pageCount + 2; // story pages plus front and back cover
+  const offerSheets = Boolean(onConfirmWithSheets) && plan.missingModelSheets.length > 0;
 
   // Move focus into the dialog and trap it, so keyboard users are not left
   // tabbing around the page behind a modal they cannot see.
@@ -136,9 +144,10 @@ export const GenerationConfirmDialog: React.FC<Props> = ({ plan, onConfirm, onCa
           <div className="border-2 border-amber-500 bg-amber-50 px-3 py-2 mb-4">
             <p className="font-ui text-xs text-amber-900">
               <strong>No model sheet for {plan.missingModelSheets.join(', ')}.</strong>{' '}
-              Generating one first locks in each character's look and markedly reduces
-              face drift across the issue. You can continue without it — the raw
-              portraits will be used instead.
+              Making one first locks in each character's look and markedly reduces
+              face drift across the issue. It adds {plan.missingModelSheets.length} image
+              {plan.missingModelSheets.length === 1 ? '' : 's'} to the run. Without it, the raw
+              portraits are used instead.
             </p>
           </div>
         )}
@@ -150,13 +159,31 @@ export const GenerationConfirmDialog: React.FC<Props> = ({ plan, onConfirm, onCa
           >
             Back
           </button>
-          <button
-            ref={confirmRef}
-            onClick={onConfirm}
-            className="comic-btn bg-yellow-400 text-black font-comic px-5 py-2 border-[3px] border-black uppercase text-sm hover:bg-yellow-300"
-          >
-            Generate
-          </button>
+          {offerSheets ? (
+            <>
+              <button
+                onClick={onConfirm}
+                className="comic-btn bg-white text-black font-comic px-4 py-2 border-[3px] border-black uppercase text-sm hover:bg-gray-100"
+              >
+                Skip sheets
+              </button>
+              <button
+                ref={confirmRef}
+                onClick={onConfirmWithSheets}
+                className="comic-btn bg-yellow-400 text-black font-comic px-5 py-2 border-[3px] border-black uppercase text-sm hover:bg-yellow-300"
+              >
+                Make sheets, then generate
+              </button>
+            </>
+          ) : (
+            <button
+              ref={confirmRef}
+              onClick={onConfirm}
+              className="comic-btn bg-yellow-400 text-black font-comic px-5 py-2 border-[3px] border-black uppercase text-sm hover:bg-yellow-300"
+            >
+              Generate
+            </button>
+          )}
         </div>
       </div>
     </div>

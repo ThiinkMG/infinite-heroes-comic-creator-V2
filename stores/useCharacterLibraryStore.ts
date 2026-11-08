@@ -206,8 +206,8 @@ export const useCharacterLibraryStore = create<CharacterLibraryStore>()(
           );
 
           // Search by description
-          const descMatch = char.persona.desc
-            ? normalizeForSearch(char.persona.desc).includes(normalizedQuery)
+          const descMatch = char.persona.backstoryText
+            ? normalizeForSearch(char.persona.backstoryText).includes(normalizedQuery)
             : false;
 
           // Search by role

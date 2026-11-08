@@ -17,6 +17,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import type { Persona } from '../types';
+import { hasValidModelSheet } from '../hooks/useGenerateModelSheet';
+import { isModelSheetOutdated } from '../utils/characterFingerprint';
 
 export interface ModelSheetState {
   isGenerating: boolean;
@@ -46,8 +48,7 @@ interface Props {
   onGenerateAll: () => void;
 }
 
-const isCurrent = (p: Persona, artStyle: string): boolean =>
-  Boolean(p.modelSheet) && p.modelSheetStyle === artStyle;
+const isCurrent = hasValidModelSheet;
 
 /** Filesystem-safe slug for download filenames. */
 const slug = (s: string): string =>
@@ -219,7 +220,15 @@ export const ModelSheetStrip: React.FC<Props> = ({
                   )}
                   {stale && !state.isGenerating && (
                     <span className="absolute top-1 left-1 bg-amber-400 border border-black font-ui text-[10px] px-1">
-                      {p.modelSheetStyle ? `${p.modelSheetStyle} sheet` : 'Different style'}
+                      {p.modelSheetStyle !== artStyle
+                        ? (p.modelSheetStyle ? `${p.modelSheetStyle} sheet` : 'Different style')
+                        : 'Portrait changed: regenerate'}
+                    </span>
+                  )}
+                  {/* Uploaded sheets stay in use, but say when the portrait has moved on. */}
+                  {!stale && p.modelSheetSource === 'uploaded' && isModelSheetOutdated(p) && !state.isGenerating && (
+                    <span className="absolute bottom-1 left-1 bg-amber-200 border border-black font-ui text-[10px] px-1">
+                      Portrait changed since upload
                     </span>
                   )}
                 </div>

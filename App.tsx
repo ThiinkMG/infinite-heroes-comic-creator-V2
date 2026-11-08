@@ -44,6 +44,7 @@ import { useGenerateImage, ComicOverrides } from './hooks/useGenerateImage';
 import { useGenerateProfile } from './hooks/useGenerateProfile';
 import { useGenerateOutline } from './hooks/useGenerateOutline';
 import { useGenerateModelSheet, hasValidModelSheet } from './hooks/useGenerateModelSheet';
+import { visualFingerprint, profileFingerprint, isProfileOutdated, adoptSheetFingerprint, adoptProfileFingerprint } from './utils/characterFingerprint';
 import { useVisualQA, type QACharacterInput } from './hooks/useVisualQA';
 import { retryWithBackoff } from './utils/retryWithBackoff';
 import { convertToCmykSafe, analyzeGamut } from './utils/cmykExport';
@@ -168,11 +169,20 @@ const App: React.FC = () => {
       if (cancelled || !parsed) return false;
       try {
         const store = useCharacterStore.getState();
-        if (parsed.hero) store.setHero(parsed.hero);
-        if (parsed.friend) store.setFriend(parsed.friend);
+        // Casts saved before fingerprints existed adopt one now, so their
+        // existing sheets and profiles count as current until the next edit.
+        if (parsed.hero) store.setHero(adoptSheetFingerprint(parsed.hero));
+        if (parsed.friend) store.setFriend(adoptSheetFingerprint(parsed.friend));
         if (parsed.additionalCharacters) {
-          parsed.additionalCharacters.forEach((char: Persona) => store.addCharacter(char));
+          parsed.additionalCharacters.forEach((char: Persona) => store.addCharacter(adoptSheetFingerprint(char)));
         }
+        [parsed.hero, parsed.friend, ...(parsed.additionalCharacters ?? [])].forEach(p => {
+          if (!p) return;
+          const profile = useCharacterStore.getState().characterProfiles.get(p.id);
+          if (profile && !profile.sourceFingerprint) {
+            useCharacterStore.getState().setCharacterProfile(p.id, adoptProfileFingerprint(profile, p));
+          }
+        });
 
         // Phase 1.2 — Rebuild characterReferences from persisted profiles.
         // Profiles are already in the store (Zustand persist hydrates before this useEffect runs).
@@ -232,7 +242,7 @@ const App: React.FC = () => {
     title: "",
     descriptionText: "",
     descriptionFiles: [],
-    publisherName: "Marvel",
+    publisherName: "",
     seriesTitle: "Infinite Heroes",
     issueNumber: "1",
     useOverlayLogo: true,
@@ -261,7 +271,6 @@ const App: React.FC = () => {
   const [selectedGenre, setSelectedGenre] = useState(GENRES[0]);
   const [selectedLanguage, setSelectedLanguage] = useState(LANGUAGES[0].code);
   const [customPremise, setCustomPremise] = useState("");
-  const [storyTone, setStoryTone] = useState(TONES[0]);
   const [richMode, setRichMode] = useState(true);
 
   // --- Sync settings to Zustand store ---
@@ -356,7 +365,7 @@ const App: React.FC = () => {
       id: crypto.randomUUID?.() ?? Math.random().toString(36).substring(2, 11),
       name: `Character ${additionalCharacters.length + 3}`,
       base64: "",
-      desc: "Additional Character",
+      desc: "",
       backstoryFiles: []
     };
     useCharacterStore.getState().addCharacter(newChar);
@@ -383,10 +392,13 @@ const App: React.FC = () => {
 
       setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: true } }));
       try {
+          // An out-of-date profile describes the old character, so don't let
+          // it override the new portrait in the sheet's brief.
+          const savedProfile = store.characterProfiles.get(personaId);
           const result = await generateModelSheet({
               persona,
               artStyle: storyContext.artStyle,
-              profile: store.characterProfiles.get(personaId),
+              profile: isProfileOutdated(savedProfile, persona) ? undefined : savedProfile,
           });
           if (result.imageUrl) {
               updateAnyCharacter(personaId, {
@@ -394,6 +406,7 @@ const App: React.FC = () => {
                   modelSheetStyle: storyContext.artStyle,
                   modelSheetAt: Date.now(),
                   modelSheetSource: 'generated',
+                  modelSheetFingerprint: visualFingerprint(persona),
               });
               setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: false } }));
           } else {
@@ -440,6 +453,13 @@ const App: React.FC = () => {
               modelSheetStyle: storyContext.artStyle,
               modelSheetAt: Date.now(),
               modelSheetSource: 'uploaded',
+              // Recorded for the "portrait changed" notice. Uploaded sheets stay
+              // valid regardless: they are the user's own art.
+              modelSheetFingerprint: (() => {
+                  const s = useCharacterStore.getState();
+                  const p = [s.hero, s.friend, ...s.additionalCharacters].find(c => c?.id === personaId);
+                  return p ? visualFingerprint(p) : undefined;
+              })(),
           });
           setModelSheetStates(prev => ({ ...prev, [personaId]: { isGenerating: false } }));
       } catch (e) {
@@ -468,19 +488,15 @@ const App: React.FC = () => {
       const store = useCharacterStore.getState();
       const cast = [store.hero, store.friend, ...store.additionalCharacters].filter(Boolean) as Persona[];
       for (const p of cast) {
-          if (p.modelSheet && p.modelSheetStyle === storyContext.artStyle) continue;
+          // Skip current sheets, and never overwrite the user's own uploaded art in bulk.
+          if (!isCastMember(p) || hasValidModelSheet(p, storyContext.artStyle) || p.modelSheetSource === 'uploaded') continue;
           await handleGenerateModelSheet(p.id);
       }
   };
 
   const handleUpdateCharacter = (id: string, updates: Partial<Persona>) => {
-    // Phase 5.2 — Mark profile stale when portrait changes for additional characters
-    if (updates.base64) {
-      const existing = useCharacterStore.getState().getCharacterById(id);
-      if (existing && updates.base64 !== existing.base64) {
-        useCharacterStore.getState().markProfileStale(id);
-      }
-    }
+    // Edits that change what the profile/sheet were built from are detected by
+    // fingerprint (utils/characterFingerprint.ts), so no flag is needed here.
     useCharacterStore.getState().updateCharacter(id, updates);
   };
 
@@ -665,9 +681,6 @@ const App: React.FC = () => {
   const [dismissedStorageWarning, setDismissedStorageWarning] = useState(false);
   const [showProfilesStep, setShowProfilesStep] = useState(false);
   const [tempProfiles, setTempProfiles] = useState<CharacterProfile[]>([]);
-  const [skipProfileAnalysis, setSkipProfileAnalysis] = useState(false);
-  const [useSavedProfiles, setUseSavedProfiles] = useState(true); // Use saved profiles if available
-  const [hasStaleSavedProfiles, setHasStaleSavedProfiles] = useState(false); // True if any saved profile is >24h old
   const [extraPages, setExtraPages] = useState(0);
 
   // Novel Mode page-by-page interactive state
@@ -919,7 +932,6 @@ const App: React.FC = () => {
       previousChoices,
       storyContext,
       storyOutline,
-      storyTone,
       richMode,
       extraPages,
     });
@@ -1031,12 +1043,12 @@ const App: React.FC = () => {
       return profiles;
   };
 
-  // Generate blank profiles for manual entry (when skipProfileAnalysis is enabled)
+  // Blank profiles for manual entry (profileMode 'manual')
   const generateBlankProfiles = (): CharacterProfile[] => {
       const personas: Persona[] = [];
       if (getHero()) personas.push(getHero());
       if (getFriend()) personas.push(getFriend());
-      personas.push(...getAdditionalChars().filter(c => c.base64 || c.backstoryText));
+      personas.push(...getAdditionalChars());
 
       return personas.map(p => ({
           id: p.id,
@@ -1649,6 +1661,23 @@ const App: React.FC = () => {
     launchStory();
   };
 
+  /** Make the missing model sheets first, then start the run. */
+  const handleConfirmWithSheets = async () => {
+    setPendingPlan(null);
+    setResumablePageCount(0);
+    showToast({ type: 'info', message: 'Making model sheets before the first page…' });
+    await handleGenerateAllModelSheets();
+    const s = useCharacterStore.getState();
+    const stillMissing = [s.hero, s.friend, ...s.additionalCharacters]
+      .filter(isCastMember)
+      .filter(p => !hasValidModelSheet(p, storyContext.artStyle))
+      .map(p => p.name || 'Unnamed');
+    if (stillMissing.length > 0) {
+      showToast({ type: 'warning', message: `No sheet for ${stillMissing.join(', ')}; using the raw portrait instead.` });
+    }
+    launchStory();
+  };
+
   /** User backed out — return them to mode selection rather than the setup form. */
   const handleCancelGeneration = () => {
     setPendingPlan(null);
@@ -1666,127 +1695,89 @@ const App: React.FC = () => {
     // Basic validation already done in handleStartAdventure
     if (!getHero()) return;
 
-    // Feature E: autoCharacterAnalysis setting also controls whether to skip AI analysis
-    const autoAnalysisEnabled = useSettingsStore.getState().autoCharacterAnalysis;
-    if (skipProfileAnalysis || !autoAnalysisEnabled) {
-        // Skip AI analysis - use blank profiles for manual entry
-        const profiles = generateBlankProfiles();
-        setTempProfiles(profiles);
+    const profileMode = useSettingsStore.getState().profileMode;
+    const cast = [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[];
+    const saved = useCharacterStore.getState().characterProfiles;
+
+    if (profileMode === 'manual') {
+        // No AI analysis. Start from each character's saved profile when one
+        // exists, so "write my own" edits it instead of wiping it to blank.
+        setTempProfiles(generateBlankProfiles().map(blank => saved.get(blank.id) ?? blank));
         setShowProfilesStep(true);
-    } else if (useSavedProfiles) {
-        // Check for existing saved profiles and use them if available
-        setIsGeneratingProfiles(true);
-        try {
-            const store = useCharacterStore.getState();
-            const allChars = [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[];
-            const existingProfiles = store.getProfilesArray();
+        return;
+    }
 
-            // Find which characters already have profiles
-            const existingProfileIds = new Set(existingProfiles.map(p => p.id));
-            const charsWithProfiles = allChars.filter(c => existingProfileIds.has(c.id));
-            const charsWithoutProfiles = allChars.filter(c => !existingProfileIds.has(c.id));
+    setIsGeneratingProfiles(true);
+    try {
+        // A saved profile is reused only if it was built from the character as
+        // it is now. Editing the portrait, refs, emblem, weapon or description
+        // changes the fingerprint, so the character is re-analysed instead of
+        // silently keeping the old face (this used to be a 24-hour age check
+        // that only logged a warning).
+        const reusable = (p: Persona): CharacterProfile | undefined => {
+            const prof = saved.get(p.id);
+            return profileMode === 'reuse' && prof && !prof.analysisFailed && !isProfileOutdated(prof, p)
+                ? prof
+                : undefined;
+        };
+        const toAnalyse = cast.filter(p => !reusable(p));
+        // Text-model calls, so they run together; image rate limits don't apply.
+        const analysed = await Promise.all(toAnalyse.map(p => generateCharacterProfile(p)));
+        const analysedById = new Map(analysed.map(prof => [prof.id, prof]));
+        const profiles = cast.map(p => reusable(p) ?? analysedById.get(p.id)!).filter(Boolean);
+        setTempProfiles(profiles);
 
-            // Staleness detection: check compiled references for age (GAP-DISCONNECT-5)
-            const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
-            const existingRefs = store.getReferencesArray();
-            const now = Date.now();
-            const staleRefs = existingRefs.filter(ref => ref.compiledAt && (now - ref.compiledAt) > STALE_THRESHOLD_MS);
-            if (staleRefs.length > 0) {
-                const staleNames = staleRefs.map(r => r.characterName || r.characterId).join(', ');
-                console.warn(`[Profile] Stale saved profiles detected (>24h old): ${staleNames}. Consider re-analyzing.`);
-                setHasStaleSavedProfiles(true);
-            } else {
-                setHasStaleSavedProfiles(false);
-            }
-
-            let finalProfiles: CharacterProfile[] = [];
-
-            // Reuse existing profiles
-            for (const char of charsWithProfiles) {
-                const existingProfile = existingProfiles.find(p => p.id === char.id);
-                if (existingProfile) {
-                    finalProfiles.push(existingProfile);
-                }
-            }
-
-            // Generate missing profiles
-            if (charsWithoutProfiles.length > 0) {
-                console.log(`[Profile] Generating ${charsWithoutProfiles.length} missing profile(s)...`);
-                for (const char of charsWithoutProfiles) {
-                    try {
-                        const profile = await generateCharacterProfile(char);
-                        finalProfiles.push(profile);
-                        // Note: Profile will be saved via batch setAllProfiles() at the end
-                    } catch (e) {
-                        console.error(`Failed to generate profile for ${char.name}:`, e);
-                        // Create a blank profile as fallback
-                        const blankProfile: CharacterProfile = {
-                            id: char.id,
-                            name: char.name,
-                            faceDescription: '',
-                            bodyType: '',
-                            clothing: '',
-                            colorPalette: '',
-                            distinguishingFeatures: ''
-                        };
-                        finalProfiles.push(blankProfile);
-                        // Note: Profile will be saved via batch setAllProfiles() at the end
-                    }
-                }
-            }
-
-            // Sort profiles to match character order
-            const charOrder = allChars.map(c => c.id);
-            finalProfiles.sort((a, b) => charOrder.indexOf(a.id) - charOrder.indexOf(b.id));
-
-            // Set profiles and skip to generation (no ProfilesDialog)
-            setTempProfiles(finalProfiles);
-            store.setAllProfiles(finalProfiles);
-
-            // Skip ProfilesDialog and proceed directly
-            if (generateFromOutlineRef.current && !storyOutline.isReady) {
-                setShowOutlineStep(true);
-                generateOutline();
-            } else {
-                proceedToComicGeneration();
-            }
-        } catch (e) {
-            console.error("Profile handling failed:", e);
-            // Fallback to manual entry
-            const profiles = generateBlankProfiles();
-            setTempProfiles(profiles);
-            setShowProfilesStep(true);
-        } finally {
-            setIsGeneratingProfiles(false);
+        const failed = analysed.filter(prof => prof.analysisFailed).map(prof => prof.name);
+        if (failed.length > 0) {
+            showToast({
+                type: 'warning',
+                message: `Couldn't analyse ${failed.join(', ')}. Re-analyse or fill in their profile before continuing.`,
+            });
         }
-    } else {
-        // Original flow - AI analysis with ProfilesDialog review
-        setIsGeneratingProfiles(true);
-        try {
-            const profiles = await generateAllProfiles();
-            setTempProfiles(profiles);
+
+        // Review whenever there is something new to look at: characters that
+        // were just analysed (new, edited or failed), or a full re-analysis.
+        // Only an unchanged cast with current profiles skips straight on.
+        if (profileMode === 'analyze' || toAnalyse.length > 0) {
             setShowProfilesStep(true);
-        } catch (e) {
-            console.error("Profile generation failed before starting:", e);
-            showToast({ type: 'error', message: 'Could not analyse the character portraits. Check your API key and connection.' });
-        } finally {
-            setIsGeneratingProfiles(false);
+            return;
         }
+        useCharacterStore.getState().setAllProfiles(profiles);
+        continueToStory();
+    } catch (e) {
+        console.error('Profile preparation failed before starting:', e);
+        showToast({ type: 'error', message: 'Could not analyse the character portraits. Check your API key and connection.' });
+    } finally {
+        setIsGeneratingProfiles(false);
     }
   };
 
-  const continueAfterProfiles = () => {
-    // Sync all profiles to Zustand store
-    useCharacterStore.getState().setAllProfiles(tempProfiles);
-    setShowProfilesStep(false);
-
-    if (generateFromOutline && !storyOutline.isReady) {
+  /** After profiles are settled: outline step (Outline Mode) or straight to pages. */
+  const continueToStory = () => {
+    if (generateFromOutlineRef.current && !storyOutline.isReady) {
         setShowOutlineStep(true);
         generateOutline();
         return;
     }
-
     proceedToComicGeneration();
+  };
+
+  const continueAfterProfiles = () => {
+    // The user has reviewed these, so record what each now describes. A failed
+    // analysis the user did not fill in stays flagged and is retried next run;
+    // one they filled in by hand counts as theirs and is kept.
+    const cast = [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[];
+    const settled = tempProfiles.map(prof => {
+        const persona = cast.find(p => p.id === prof.id);
+        if (!persona) return prof;
+        const filledIn = Boolean(prof.faceDescription?.trim() || prof.clothing?.trim());
+        if (prof.analysisFailed && !filledIn) return prof;
+        const { analysisFailed: _failed, ...rest } = prof;
+        return { ...rest, sourceFingerprint: profileFingerprint(persona) };
+    });
+    useCharacterStore.getState().setAllProfiles(settled);
+    setShowProfilesStep(false);
+    continueToStory();
   };
 
   const proceedToComicGeneration = () => {
@@ -1794,15 +1785,9 @@ const App: React.FC = () => {
     const config = getComicConfig(storyContext.pageLength, extraPages, isNovelMode);
     setIsTransitioning(true);
     isStoppedRef.current = false;
-    
-    let availableTones = TONES;
-    if (selectedGenre === "Teen Drama / Slice of Life" || selectedGenre === "Lighthearted Comedy") {
-        availableTones = TONES.filter(t => t.includes("CASUAL") || t.includes("WHOLESOME") || t.includes("QUIPPY"));
-    } else if (selectedGenre === "Classic Horror") {
-        availableTones = TONES.filter(t => t.includes("INNER-MONOLOGUE") || t.includes("OPERATIC"));
-    }
-    
-    setStoryTone(availableTones[Math.floor(Math.random() * availableTones.length)]);
+    // Tone is no longer picked at random here. It is storyContext.tone (or the
+    // genre's tone under "Auto"), resolved by utils/storyBrief, so the outline
+    // and the pages use the same voice and the choice is saved with the draft.
 
     // A supplied cover skips the most expensive call in the run. It is generated
     // first, before the user has seen anything, so reusing existing key art saves
@@ -2431,7 +2416,7 @@ Create a powerful, memorable conclusion that honors the user's story path.
         title: "",
         descriptionText: "",
         descriptionFiles: [],
-        publisherName: "Marvel",
+        publisherName: "",
         seriesTitle: "Infinite Heroes",
         issueNumber: "1",
         useOverlayLogo: true,
@@ -2744,19 +2729,11 @@ Create a powerful, memorable conclusion that honors the user's story path.
   };
 
   const handleHeroUpdate = async (updates: Partial<Persona>) => {
-    // Phase 5.2 — Mark profile stale when portrait changes
-    if (updates.base64 && hero && updates.base64 !== hero.base64) {
-      useCharacterStore.getState().markProfileStale(hero.id);
-    }
-    setHero(hero ? { ...hero, ...updates } : { id: 'hero', name: 'Hero', base64: '', desc: 'Main Hero', ...updates });
+    setHero(hero ? { ...hero, ...updates } : { id: 'hero', name: 'Hero', base64: '', desc: '', ...updates });
   };
 
   const handleFriendUpdate = async (updates: Partial<Persona>) => {
-    // Phase 5.2 — Mark profile stale when portrait changes
-    if (updates.base64 && friend && updates.base64 !== friend.base64) {
-      useCharacterStore.getState().markProfileStale(friend.id);
-    }
-    setFriend(friend ? { ...friend, ...updates } : { id: 'friend', name: 'Co-Star', base64: '', desc: 'Sidekick', ...updates });
+    setFriend(friend ? { ...friend, ...updates } : { id: 'friend', name: 'Co-Star', base64: '', desc: '', ...updates });
   };
 
   const handlePortraitUpload = async (id: string, file: File) => {
@@ -3653,8 +3630,6 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           onImportDraft={importDraft}
           onClearSetup={handleClearSetup}
           onImproveText={improveTextWithAI}
-          skipProfileAnalysis={skipProfileAnalysis}
-          onSkipProfileAnalysisChange={setSkipProfileAnalysis}
           modelSheetProps={modelSheetProps}
           onOpenCharacterLibrary={() => setShowCharacterLibrary(true)}
           onCoverUpload={handleCoverUpload}
@@ -3665,9 +3640,6 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
           onResumeComic={handleResumeComic}
           onRestoreSession={handleRestoreSession}
           onDeleteSessionSnapshot={handleDeleteSessionSnapshot}
-          useSavedProfiles={useSavedProfiles}
-          onUseSavedProfilesChange={setUseSavedProfiles}
-          hasStaleSavedProfiles={hasStaleSavedProfiles}
           onPresetSelect={handlePresetSelect}
           onSettingsOpen={() => setShowSettings(true)}
       />
@@ -3982,6 +3954,7 @@ Return ONLY the improved description text. No explanations, no markdown, no quot
         <GenerationConfirmDialog
           plan={pendingPlan}
           onConfirm={handleConfirmGeneration}
+          onConfirmWithSheets={handleConfirmWithSheets}
           onCancel={handleCancelGeneration}
         />
       )}

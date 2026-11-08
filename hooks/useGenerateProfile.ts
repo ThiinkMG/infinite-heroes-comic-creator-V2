@@ -27,6 +27,7 @@ import {
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { validateProfileCompleteness } from '../utils/profileValidation';
 import { useMetricsStore } from '../stores/useMetricsStore';
+import { profileFingerprint } from '../utils/characterFingerprint';
 
 // ============================================================================
 // TYPES
@@ -351,6 +352,9 @@ export const useGenerateProfile = (config: GenerateProfileConfig) => {
     return {
       id: persona.id,
       name: persona.name || 'Unknown',
+      // What this profile was analysed from. If the character is edited later,
+      // the profile is out of date and gets re-analysed instead of reused.
+      sourceFingerprint: profileFingerprint(persona),
       faceDescription: ensureString(parsed.faceDescription),
       bodyType: ensureString(parsed.bodyType),
       clothing: ensureString(parsed.clothing),
@@ -434,7 +438,7 @@ export const useGenerateProfile = (config: GenerateProfileConfig) => {
     }
 
     // Include character description/backstory text (check both fields for compatibility)
-    const descriptionText = persona.backstoryText || persona.desc || '';
+    const descriptionText = persona.backstoryText?.trim() || '';
     if (descriptionText.trim().length > 0) {
       claudeContent.push(createTextContent(`Character Description/Backstory: ${descriptionText}`));
       geminiContent.push({ text: `Character Description/Backstory: ${descriptionText}` });
@@ -462,6 +466,7 @@ export const useGenerateProfile = (config: GenerateProfileConfig) => {
 
     if (!hasData && !forceAnalysis) {
       console.log(`Skipping profile generation for ${persona.name} (no data provided)`);
+      generatingProfileIds.current.delete(persona.id);
       return {
         id: persona.id,
         name: persona.name || 'Unknown',
@@ -616,6 +621,8 @@ For hardNegatives, analyze the image and add negatives for:
       return {
         id: persona.id,
         name: persona.name || 'Unknown',
+        // Callers must not treat this blank as a real analysis.
+        analysisFailed: true,
         faceDescription: '',
         bodyType: '',
         clothing: '',

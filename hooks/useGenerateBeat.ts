@@ -28,6 +28,7 @@ import { createTextContent, createImageContent, extractJsonFromResponse, getText
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import { useMetricsStore } from '../stores/useMetricsStore';
+import { formatStoryDriver, resolveTone, getArcGuidance, getFinalePageInstruction, formatAttachedText, isImageFile } from '../utils/storyBrief';
 import { softenScene, looksRisky } from '../utils/sceneSafety';
 
 // ============================================================================
@@ -64,8 +65,6 @@ export interface GenerateBeatParams {
   storyContext: StoryContext;
   /** Story outline state */
   storyOutline: StoryOutline;
-  /** Story tone setting */
-  storyTone: string;
   /** Whether rich/novel mode is enabled */
   richMode: boolean;
   /** Extra pages added to story */
@@ -241,7 +240,6 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
       previousChoices,
       storyContext,
       storyOutline,
-      storyTone,
       richMode,
       extraPages,
     } = params;
@@ -286,10 +284,8 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
     }
 
     // Determine Core Story Driver (Genre vs Custom Premise)
-    let coreDriver = `GENRE: ${selectedGenre}. TONE: ${storyTone}.`;
-    if (selectedGenre === 'Custom') {
-      coreDriver = `STORY PREMISE: ${customPremise || "A totally unique, unpredictable adventure"}. (Follow this premise strictly over standard genre tropes).`;
-    }
+    // Shared with the outline writer so both work from the same brief.
+    const coreDriver = formatStoryDriver(selectedGenre, customPremise, resolveTone(selectedGenre, storyContext.tone));
 
     /**
      * The writer and the artist are different models with different safety
@@ -323,9 +319,9 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
 
     // Character Context
     const charContext = [
-      `HERO: ${hero.name || 'Main Hero'}. Role: ${getRoleLabel(hero) || 'Hero'}. Backstory: ${hero.backstoryText || hero.desc || 'Unknown'}.`,
-      friend ? `CO-STAR: ${friend.name || 'Sidekick'}. Role: ${getRoleLabel(friend) || 'Sidekick'}. Backstory: ${friend.backstoryText || friend.desc || 'Unknown'}.` : null,
-      ...additionalChars.map(c => `${c.name}: Role: ${getRoleLabel(c) || 'Supporting'}. ${c.backstoryText || c.desc || 'Unknown'}.`)
+      `HERO: ${hero.name || 'Main Hero'}. Role: ${getRoleLabel(hero) || 'Hero'}. Backstory: ${hero.backstoryText?.trim() || 'Unknown'}.`,
+      friend ? `CO-STAR: ${friend.name || 'Sidekick'}. Role: ${getRoleLabel(friend) || 'Sidekick'}. Backstory: ${friend.backstoryText?.trim() || 'Unknown'}.` : null,
+      ...additionalChars.map(c => `${c.name}: Role: ${getRoleLabel(c) || 'Supporting'}. ${c.backstoryText?.trim() || 'Unknown'}.`)
     ].filter(Boolean).join('\n');
 
     // GAP-11 FIX: Visual Profile Context for Scene Writing
@@ -387,6 +383,10 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
     STORY TITLE: ${storyContext.title || 'Untitled Adventure'}
     STORY DESCRIPTION: ${storyContext.descriptionText || 'A new adventure begins.'}
     ${storyOutline.isReady ? `STORY OUTLINE: ${storyOutline.content}` : ''}
+    ${formatAttachedText(storyContext.descriptionFiles, 'ATTACHED STORY DOCUMENT')}${[hero, friend, ...additionalChars]
+      .filter(Boolean)
+      .map(c => formatAttachedText(c!.backstoryFiles, `${c!.name.toUpperCase()} BACKSTORY DOCUMENT`))
+      .join('')}
     `;
 
     // Batch-of-3 generation context for narrative continuity
@@ -417,22 +417,20 @@ MAINTAIN STRONG CONTINUITY with the other pages in this batch. The 3 pages shoul
     }
 
     if (isFinalPage) {
-      baseInstruction += " FINAL PAGE. KARMIC CLIFFHANGER REQUIRED. You MUST explicitly reference the User's choice from PAGE 3 in the narrative and show how that specific philosophy led to this conclusion. Text must end with 'TO BE CONTINUED...' (or localized equivalent).";
-    } else if (isDecisionPage) {
-      baseInstruction += " End with a PSYCHOLOGICAL choice about VALUES, RELATIONSHIPS, or RISK. (e.g., Truth vs. Safety, Forgive vs. Avenge). The choices MUST be a brief descriptive summary of the action the user is taking (e.g. 'Confront the suspect at the warehouse' vs 'Follow from a distance'). NEVER use generic 'Option A' or 'Option B'.";
-      if (previousChoices && previousChoices.length > 0) {
-        baseInstruction += ` REJECTED CHOICES (DO NOT REUSE): ${previousChoices.map(c => `"${c}"`).join(', ')}. Generate COMPLETELY DIFFERENT choices that explore alternative story directions.`;
-      }
+      const resolvedChoices = history
+        .map(f => f.resolvedChoice)
+        .filter((c): c is string => Boolean(c && c.trim()));
+      baseInstruction += getFinalePageInstruction(resolvedChoices);
     } else {
-      // Narrative arc guidance based on page number
-      if (pageNum === 1) {
-        baseInstruction += " INCITING INCIDENT. An event disrupts the status quo. Establish the genre's intended mood. (If Slice of Life: A social snag/surprise. If Adventure: A call to action).";
-      } else if (pageNum <= 4) {
-        baseInstruction += " RISING ACTION. The heroes engage with the new situation. Focus on dialogue, character dynamics, and initial challenges.";
-      } else if (pageNum <= 8) {
-        baseInstruction += " COMPLICATION. A twist occurs! A secret is revealed, a misunderstanding deepens, or the path is blocked. (Keep intensity appropriate to Genre - e.g. Social awkwardness for Comedy, Danger for Horror).";
-      } else {
-        baseInstruction += " CLIMAX. The confrontation with the main conflict. The truth comes out, the contest ends, or the battle is fought.";
+      // Arc position scaled to the issue length. Decision pages get it too:
+      // in Novel Mode that is every other page, which used to receive no arc
+      // guidance at all.
+      baseInstruction += ` ${getArcGuidance(pageNum, comicConfig.MAX_STORY_PAGES)}`;
+      if (isDecisionPage) {
+        baseInstruction += " End with a PSYCHOLOGICAL choice about VALUES, RELATIONSHIPS, or RISK. (e.g., Truth vs. Safety, Forgive vs. Avenge). The choices MUST be a brief descriptive summary of the action the user is taking (e.g. 'Confront the suspect at the warehouse' vs 'Follow from a distance'). NEVER use generic 'Option A' or 'Option B'.";
+        if (previousChoices && previousChoices.length > 0) {
+          baseInstruction += ` REJECTED CHOICES (DO NOT REUSE): ${previousChoices.map(c => `"${c}"`).join(', ')}. Generate COMPLETELY DIFFERENT choices that explore alternative story directions.`;
+        }
       }
     }
 
@@ -524,21 +522,14 @@ OUTPUT STRICT JSON ONLY (No markdown formatting):
     // Build Gemini parts (used as fallback)
     const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: prompt }];
 
-    // Add Story Description Files
-    storyContext.descriptionFiles.forEach(f => {
-      parts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } });
-    });
-
-    // Add Character Backstory Files
-    if (hero.backstoryFiles) {
-      hero.backstoryFiles.forEach(f => parts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } }));
-    }
-    if (friend?.backstoryFiles) {
-      friend.backstoryFiles.forEach(f => parts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } }));
-    }
-    additionalChars.forEach(c => {
-      c.backstoryFiles?.forEach(f => parts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } }));
-    });
+    // Image attachments only. Text files are already inlined into the prompt
+    // (formatAttachedText), so sending them again would duplicate them.
+    const pushImages = (files?: { base64: string; mimeType: string; name: string }[]) =>
+      files?.filter(isImageFile).forEach(f => parts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } }));
+    pushImages(storyContext.descriptionFiles);
+    pushImages(hero.backstoryFiles);
+    pushImages(friend?.backstoryFiles);
+    additionalChars.forEach(c => pushImages(c.backstoryFiles));
 
     // Try Claude first for text analysis
     const claude = getClaude();

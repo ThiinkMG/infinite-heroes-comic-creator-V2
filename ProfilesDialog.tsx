@@ -4,6 +4,7 @@ import { ModelSheetStrip, type ModelSheetState } from './components/ModelSheetSt
 import { validateProfileCompleteness } from './utils/profileValidation';
 import { ProfileQualityIndicator } from './components/ProfileQualityIndicator';
 import { useCharacterStore } from './stores/useCharacterStore';
+import { isProfileOutdated } from './utils/characterFingerprint';
 
 // Bulk import match result
 interface BulkMatch {
@@ -62,11 +63,12 @@ export const ProfilesDialog: React.FC<Props> = ({ profiles, onUpdate, onAnalyze,
     const characterLocks = useCharacterStore((state) => state.characterLocks);
     const updateCharacterLock = useCharacterStore((state) => state.updateCharacterLock);
 
-    // Task 1.3: Staleness check — characterReferences holds compiledAt timestamps
-    const characterReferences = useCharacterStore((state) => state.characterReferences);
-
-    // Task 5.2: Portrait-change stale flag
-    const staledProfileIds = useCharacterStore((state) => state.staledProfileIds);
+    // The character each profile describes, to tell whether the profile still
+    // matches it (see utils/characterFingerprint.ts).
+    const hero = useCharacterStore((state) => state.hero);
+    const friend = useCharacterStore((state) => state.friend);
+    const additionalCharacters = useCharacterStore((state) => state.additionalCharacters);
+    const personaFor = (id: string) => [hero, friend, ...additionalCharacters].find(c => c?.id === id) ?? undefined;
 
     const getLock = (id: string) =>
         characterLocks.get(id) ?? { characterId: id, lockFace: false, lockOutfit: false, lockWeapon: false, lockEmblem: false };
@@ -228,16 +230,6 @@ export const ProfilesDialog: React.FC<Props> = ({ profiles, onUpdate, onAnalyze,
                     </div>
                 )}
 
-                {/* Task 1.3: Staleness warning — shown if any profile was compiled more than 24h ago */}
-                {profiles.some(p => {
-                    const ref = characterReferences?.get(p.id);
-                    return ref && (Date.now() - (ref.compiledAt ?? Date.now())) > 24 * 60 * 60 * 1000;
-                }) && (
-                    <div className="bg-amber-100 border-2 border-amber-400 px-3 py-2 mb-3 text-sm text-amber-800 rounded font-comic">
-                        ⚠️ Some profiles may be outdated — re-analyze to refresh.
-                    </div>
-                )}
-
                 {modelSheetProps && <ModelSheetStrip {...modelSheetProps} />}
 
                 <div className="overflow-y-auto flex-1 pr-2 space-y-6">
@@ -252,10 +244,16 @@ export const ProfilesDialog: React.FC<Props> = ({ profiles, onUpdate, onAnalyze,
 
                         return (
                         <div key={p.id} className="border-4 border-black p-4 bg-gray-50 flex flex-col gap-3">
-                            {/* Task 5.2: Portrait-change stale flag — shown when portrait was updated after profile was compiled */}
-                            {staledProfileIds.has(p.id) && (
+                            {p.analysisFailed ? (
+                                <div className="bg-red-100 border-2 border-red-400 px-3 py-2 mb-2 text-sm text-red-800 rounded flex items-center gap-2 font-comic" role="alert">
+                                    Analysis failed for this character. Press ANALYZE to retry, or fill in the profile yourself.
+                                </div>
+                            ) : (() => {
+                                const persona = personaFor(p.id);
+                                return persona && isProfileOutdated(p, persona);
+                            })() && (
                                 <div className="bg-yellow-100 border-2 border-yellow-400 px-3 py-2 mb-2 text-sm text-yellow-800 rounded flex items-center gap-2 font-comic">
-                                    📸 Portrait updated — Re-analyze to refresh profile
+                                    This character changed since the profile was made. Re-analyze to refresh it.
                                 </div>
                             )}
 

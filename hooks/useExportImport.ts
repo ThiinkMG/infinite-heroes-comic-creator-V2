@@ -292,7 +292,7 @@ export const useExportImport = (config: ExportImportConfig): UseExportImportRetu
           title: '',
           descriptionText: '',
           descriptionFiles: [],
-          publisherName: 'Marvel',
+          publisherName: '',
           seriesTitle: 'Infinite Heroes',
           issueNumber: '1',
           useOverlayLogo: true,

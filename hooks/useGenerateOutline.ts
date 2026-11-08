@@ -24,6 +24,7 @@ import {
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import { useMetricsStore } from '../stores/useMetricsStore';
+import { formatStoryDriver, resolveTone, formatAttachedText, formatPacingPlan } from '../utils/storyBrief';
 
 // ============================================================================
 // TYPES
@@ -334,7 +335,16 @@ export const useGenerateOutline = (config: GenerateOutlineConfig) => {
 
     // Read settings from store
     const settingsState = useSettingsStore.getState();
-    const { selectedGenre, selectedLanguage } = settingsState;
+    const { selectedGenre, selectedLanguage, customPremise } = settingsState;
+    // Same brief the beat writer uses: premise (for Custom), tone, and any
+    // uploaded story or backstory text. The outline used to see none of these.
+    const storyDriver = formatStoryDriver(selectedGenre, customPremise, resolveTone(selectedGenre, storyContext.tone));
+    const attachedText = [
+      formatAttachedText(storyContext.descriptionFiles, 'ATTACHED STORY DOCUMENT'),
+      ...[getHero(), getFriend(), ...getAdditionalChars()]
+        .filter(Boolean)
+        .map(c => formatAttachedText(c!.backstoryFiles, `${c!.name.toUpperCase()} BACKSTORY DOCUMENT`)),
+    ].join('');
 
     // Outlines exist only in Outline Mode, so isNovelMode is always false here.
     // The length comes from storyContext, the same value the page loop uses.
@@ -392,13 +402,13 @@ SCENE DESCRIPTION LIMITS: every page you plan must be drawable by an image model
 You are a professional comic book writer planning a ${comicConfig.MAX_STORY_PAGES}-page story.
 
 STORY TITLE: ${storyContext.title}
-GENRE: ${selectedGenre}
+${storyDriver}
 LANGUAGE: ${langName}
 ART STYLE: ${storyContext.artStyle}
 CHARACTERS: ${characterNames.join(', ')}
 ${charContext}${visualRefBlock}
 STORY DESCRIPTION: ${storyContext.descriptionText}
-${userNotes ? `USER NOTES: ${userNotes}` : ''}
+${attachedText}${userNotes ? `USER NOTES: ${userNotes}` : ''}
 
 For EACH page, provide the following structured breakdown:
 
@@ -437,11 +447,7 @@ PAGE [N]:
 - aspect-to-aspect: Mood/atmosphere - environmental poetry (rare)
 
 === PACING RHYTHM ===
-- Pages 1-2: SLOW (establishing, setting the scene)
-- Pages 3-5: MEDIUM (rising action, character dynamics)
-- Pages 6-7: FAST (complication, tension building)
-- Page 8-9: SLOW->FAST (climax build)
-- Page ${comicConfig.MAX_STORY_PAGES}: SLOW (resolution/cliffhanger)
+${formatPacingPlan(comicConfig.MAX_STORY_PAGES)}
 
 === CRITICAL RULES ===
 1. DO NOT REPEAT poses, locations, or camera angles between consecutive pages

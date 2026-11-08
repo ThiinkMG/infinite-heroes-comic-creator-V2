@@ -177,7 +177,6 @@ export const SettingsDialog: React.FC<Props> = ({ serverKeyExists, anthropicServ
     // Consistency Settings (Feature E)
     const consistencyStrength = useSettingsStore(s => s.consistencyStrength);
     const reAnchorEveryN = useSettingsStore(s => s.reAnchorEveryN);
-    const autoCharacterAnalysis = useSettingsStore(s => s.autoCharacterAnalysis);
     const referenceImagePriority = useSettingsStore(s => s.referenceImagePriority);
     const setConsistencyStrength = useSettingsStore(s => s.setConsistencyStrength);
 
@@ -202,7 +201,6 @@ export const SettingsDialog: React.FC<Props> = ({ serverKeyExists, anthropicServ
     const setPromptMode = useSettingsStore(s => s.setPromptMode);
     const [generationOpen, setGenerationOpen] = useState(false);
     const setReAnchorEveryN = useSettingsStore(s => s.setReAnchorEveryN);
-    const setAutoCharacterAnalysis = useSettingsStore(s => s.setAutoCharacterAnalysis);
     const setReferenceImagePriority = useSettingsStore(s => s.setReferenceImagePriority);
 
     const STRENGTH_LEVELS = [
@@ -488,20 +486,7 @@ export const SettingsDialog: React.FC<Props> = ({ serverKeyExists, anthropicServ
 
                                 {/* Toggles */}
                                 <div className="space-y-2">
-                                    <label className="flex items-center gap-3 cursor-pointer group">
-                                        <input
-                                            type="checkbox"
-                                            checked={autoCharacterAnalysis}
-                                            onChange={e => setAutoCharacterAnalysis(e.target.checked)}
-                                            className="w-5 h-5 accent-blue-600 cursor-pointer"
-                                            aria-label="Auto character analysis"
-                                        />
-                                        <div>
-                                            <span className="font-comic text-xs font-bold text-blue-800 uppercase group-hover:text-blue-600">Auto Character Analysis</span>
-                                            <p className="font-comic text-[10px] text-gray-500">Automatically run AI visual analysis when starting generation. Disable for faster start.</p>
-                                        </div>
-                                    </label>
-
+                                    {/* Character analysis is chosen on the setup screen (Profiles: Reuse / Re-analyse / Write my own). */}
                                     <label className="flex items-center gap-3 cursor-pointer group">
                                         <input
                                             type="checkbox"
