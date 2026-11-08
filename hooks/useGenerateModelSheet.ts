@@ -32,8 +32,9 @@ import { detectImageMimeType } from '../claudeHelpers';
 import { isModelSheetOutdated } from '../utils/characterFingerprint';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import { useMetricsStore } from '../stores/useMetricsStore';
+import { IMAGE_MODEL } from '../config/models';
 
-const MODEL_IMAGE_GEN_NAME = 'gemini-3-pro-image-preview';
+const MODEL_IMAGE_GEN_NAME = IMAGE_MODEL;
 const TIMEOUT_MS = 120_000;
 
 export interface GenerateModelSheetConfig {

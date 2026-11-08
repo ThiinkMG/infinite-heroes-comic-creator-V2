@@ -19,12 +19,13 @@ import { detectImageMimeType } from '../claudeHelpers';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import { COVER_STYLES, CoverStyle, formatCoverPrompt } from '../data/coverStyles';
+import { IMAGE_MODEL } from '../config/models';
 
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 
-const MODEL_IMAGE_GEN_NAME = 'gemini-3-pro-image-preview';
+const MODEL_IMAGE_GEN_NAME = IMAGE_MODEL;
 
 /** Cover style types supported by this hook */
 export type CoverStyleType = 'action' | 'portrait' | 'ensemble' | 'minimalist';

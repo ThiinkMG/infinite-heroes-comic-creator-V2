@@ -32,12 +32,13 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import { useMetricsStore } from '../stores/useMetricsStore';
 import type { CharacterLockState, CharacterReferenceObject } from '../types';
+import { IMAGE_MODEL } from '../config/models';
 
 // ============================================================================
 // TYPES
 // ============================================================================
 
-const MODEL_IMAGE_GEN_NAME = "gemini-3-pro-image-preview";
+const MODEL_IMAGE_GEN_NAME = IMAGE_MODEL;
 
 /** Configuration for the useGenerateImage hook */
 export interface GenerateImageConfig {

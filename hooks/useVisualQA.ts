@@ -23,9 +23,10 @@
 import { GoogleGenAI } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
 import { createImageContent, createTextContent, extractJsonFromResponse, getTextFromClaudeResponse, ClaudeContentBlock, detectImageMimeType } from '../claudeHelpers';
+import { CLAUDE_TEXT_MODEL, GEMINI_VISION_MODEL } from '../config/models';
 
-const MODEL_CLAUDE_VISION = 'claude-sonnet-4-5-20250929';
-const MODEL_GEMINI_VISION = 'gemini-2.5-pro';
+const MODEL_CLAUDE_VISION = CLAUDE_TEXT_MODEL;
+const MODEL_GEMINI_VISION = GEMINI_VISION_MODEL;
 
 export interface QACharacterInput {
   name: string;

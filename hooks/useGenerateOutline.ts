@@ -25,6 +25,7 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import { useMetricsStore } from '../stores/useMetricsStore';
 import { formatStoryDriver, resolveTone, formatAttachedText, formatPacingPlan } from '../utils/storyBrief';
+import { CLAUDE_TEXT_MODEL, GEMINI_TEXT_MODEL } from '../config/models';
 
 // ============================================================================
 // TYPES
@@ -66,8 +67,8 @@ export interface GenerateOutlineResult {
 // CONSTANTS
 // ============================================================================
 
-const MODEL_TEXT_NAME = "gemini-2.5-pro";
-const MODEL_TEXT_NAME_CLAUDE = "claude-sonnet-4-5-20250929";
+const MODEL_TEXT_NAME = GEMINI_TEXT_MODEL;
+const MODEL_TEXT_NAME_CLAUDE = CLAUDE_TEXT_MODEL;
 
 // ============================================================================
 // HOOK

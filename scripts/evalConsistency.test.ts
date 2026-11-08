@@ -33,11 +33,12 @@ import { readFileSync, existsSync } from 'fs';
 import { GoogleGenAI } from '@google/genai';
 import { buildV2Prompt, type V2Character } from '../hooks/promptAssemblerV2';
 import type { Beat, CharacterProfile, Persona, StoryContext } from '../types';
+import { IMAGE_MODEL, GEMINI_VISION_MODEL } from '../config/models';
 
 const ENABLED = process.env.EVAL === '1' && Boolean(process.env.GEMINI_API_KEY);
 const PAGES = Number(process.env.EVAL_PAGES) || 3;
-const IMAGE_MODEL = 'gemini-3-pro-image-preview';
-const JUDGE_MODEL = 'gemini-2.5-pro';
+// Same models the app uses, so the eval measures what users get.
+const JUDGE_MODEL = GEMINI_VISION_MODEL;
 
 // ---------------------------------------------------------------------------
 // Fixture

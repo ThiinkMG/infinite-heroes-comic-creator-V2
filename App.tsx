@@ -70,6 +70,8 @@ import { buildAllCharacterReferences } from './utils/buildCharacterReference';
 // --- Feature G: Visual Drift Detection ---
 import { checkVisualDrift } from './utils/visualDriftDetector';
 import { DriftWarningToast } from './components/DriftWarningToast';
+import { CLAUDE_TEXT_MODEL, GEMINI_TEXT_MODEL, IMAGE_MODEL } from './config/models';
+import { describeImageError } from './utils/describeImageError';
 
 /*
  * Modals are loaded on demand.
@@ -98,9 +100,9 @@ const ModalFallback: React.FC = () => (
 );
 
 // --- Constants ---
-const MODEL_IMAGE_GEN_NAME = "gemini-3-pro-image-preview";
-const MODEL_TEXT_NAME = "gemini-2.5-pro"; // Gemini fallback
-const MODEL_TEXT_NAME_CLAUDE = "claude-sonnet-4-5-20250929";
+const MODEL_IMAGE_GEN_NAME = IMAGE_MODEL;
+const MODEL_TEXT_NAME = GEMINI_TEXT_MODEL; // Gemini fallback
+const MODEL_TEXT_NAME_CLAUDE = CLAUDE_TEXT_MODEL;
 
 /**
  * How many sessions keep a restorable snapshot.
@@ -3259,36 +3261,46 @@ Create a powerful, memorable conclusion that honors the user's story path.
       if (mainBase64) allRefs.push(mainBase64);
     }
 
-    if (allRefs.length > 0) {
-      // Multimodal path: interleave reference images with the text prompt
-      type ContentPart = { text: string } | { inlineData: { mimeType: string; data: string } };
-      const contents: ContentPart[] = [];
-      allRefs.forEach((base64, i) => {
-        contents.push({ text: `[REFERENCE IMAGE ${i + 1} — use as visual reference]:` });
-        contents.push({ inlineData: { mimeType: detectImageMimeType(base64), data: base64 } });
-      });
-      contents.push({ text: prompt });
+    /*
+     * One call for every case. The text-only path used to call
+     * `ai.models.generateImages`, which is Imagen's "predict" endpoint: Gemini
+     * image models don't support it and it returned a 404, so Single Image Mode
+     * failed whenever no reference image was attached.
+     */
+    type ContentPart = { text: string } | { inlineData: { mimeType: string; data: string } };
+    const contents: ContentPart[] = [];
+    allRefs.forEach((base64, i) => {
+      // Plain wording, no [BRACKETS]: Gemini renders bracketed labels as visible text.
+      contents.push({ text: `Reference image ${i + 1}, use as a visual reference:` });
+      contents.push({ inlineData: { mimeType: detectImageMimeType(base64), data: base64 } });
+    });
+    contents.push({ text: prompt });
 
-      const res = await ai.models.generateContent({
+    // Isolated assets read better square; characters and sheets stay portrait.
+    const aspectRatio = params.tab === 'emblem' || params.tab === 'weapon' ? '1:1' : '2:3';
+    const imageSize = useSettingsStore.getState().imageResolution.toUpperCase();
+
+    let res;
+    try {
+      res = await ai.models.generateContent({
         model: MODEL_IMAGE_GEN_NAME,
         contents,
-        config: { imageConfig: { aspectRatio: '2:3' } }
+        config: { imageConfig: { aspectRatio, imageSize } },
       });
-      const part = res.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
-      if (!part?.inlineData?.data) throw new Error('No image data returned');
-      return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+    } catch (e) {
+      throw new Error(describeImageError(e));
     }
-
-    // Text-only path: simpler generateImages call
-    const result = await ai.models.generateImages({
-      model: MODEL_IMAGE_GEN_NAME,
-      prompt,
-      config: { numberOfImages: 1, outputMimeType: 'image/png' }
-    });
-
-    const imgData = result.generatedImages?.[0]?.image?.imageBytes;
-    if (!imgData) throw new Error('No image data returned');
-    return `data:image/png;base64,${imgData}`;
+    const candidate = res.candidates?.[0];
+    const part = candidate?.content?.parts?.find((p: any) => p.inlineData);
+    if (!part?.inlineData?.data) {
+      const reason = String(candidate?.finishReason ?? '');
+      throw new Error(
+        /SAFETY|PROHIBITED|BLOCK/i.test(reason)
+          ? 'The image was blocked by the safety filter. Try rewording the description.'
+          : 'No image came back. Try again, or simplify the description.',
+      );
+    }
+    return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
   };
 
   const handleSingleImageSaveToGallery = (imageUrl: string, params: SingleImageGenerateParams) => {

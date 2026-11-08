@@ -132,7 +132,7 @@ export const SingleImageMode: React.FC<SingleImageModeProps> = ({ onClose, onGen
             setGeneratedImages(prev => [newImg, ...prev]);
             if (onSaveToGallery) onSaveToGallery(imageUrl, params);
         } catch (e) {
-            setError(String(e));
+            setError(e instanceof Error ? e.message : String(e));
         } finally {
             setIsGenerating(false);
         }
@@ -150,7 +150,7 @@ export const SingleImageMode: React.FC<SingleImageModeProps> = ({ onClose, onGen
             const improved = await onImproveDescription(description, activeTab, artStyle, refImages, subContext);
             setDescription(improved);
         } catch (e) {
-            setError(String(e));
+            setError(e instanceof Error ? e.message : String(e));
         } finally {
             setIsImprovingDescription(false);
         }
