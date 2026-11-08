@@ -44,8 +44,9 @@ export const Z_INDEX = {
 export const getComicConfig = (storyLength: number, extraPages: number = 0, isNovelMode: boolean = false) => {
     // Defensive clamp: guard against 0/negative values from malformed drafts or programmatic calls
     storyLength = Math.max(1, Math.min(20, storyLength || 1));
-    // Decision pages: In Novel Mode, EVERY story page is a decision page
-    // In Outline Mode, fixed intervals based on story length
+    // Decision pages exist only in Novel Mode. Outline Mode runs start to finish
+    // with no reader input, and the reader hides choice buttons there, so a
+    // decision page would end on a question nobody can answer.
     const getDecisionPages = (pages: number, novelMode: boolean): number[] => {
         if (novelMode) {
             // Novel Mode: decision every NOVEL_MODE_BATCH_SIZE pages.
@@ -58,14 +59,7 @@ export const getComicConfig = (storyLength: number, extraPages: number = 0, isNo
             if (pages > 0 && !decisions.includes(pages)) decisions.push(pages);
             return decisions;
         }
-        // Outline Mode: Fixed intervals, filtered to valid range
-        let decisionPages: number[];
-        if (pages <= 3) decisionPages = [2];           // Quick Shot: 1 decision
-        else if (pages <= 6) decisionPages = [2, 4];   // Short Story: 2 decisions
-        else decisionPages = [3, 5, 7];                // Standard Issue: 3 decisions
-
-        // Filter out pages that exceed total page count
-        return decisionPages.filter(p => p <= pages);
+        return [];
     };
 
     return {
@@ -94,6 +88,13 @@ export const PAGE_LENGTHS = [
   { label: "Short Story (6 Pages)", value: 6 },
   { label: "Standard Issue (9 Pages)", value: 9 }
 ];
+/**
+ * Length for a fresh setup. Must be one of PAGE_LENGTHS: the setup dropdown is
+ * controlled, and a value it doesn't list makes it display the first option
+ * (3 pages) while the app actually generates the hidden value. The old default
+ * of 10 did exactly that.
+ */
+export const DEFAULT_PAGE_LENGTH = 6;
 export const GENRES = ["Classic Horror", "Superhero Action", "Dark Sci-Fi", "High Fantasy", "Neon Noir Detective", "Wasteland Apocalypse", "Lighthearted Comedy", "Teen Drama / Slice of Life", "Custom"];
 export const TONES = [
     "ACTION-HEAVY (Short, punchy dialogue. Focus on kinetics.)",
@@ -310,6 +311,18 @@ export interface Persona {
    */
   modelSheetSource?: 'generated' | 'uploaded';
 }
+
+/**
+ * Whether an additional character has enough to take part in a story: a
+ * portrait, a description, or uploaded files.
+ *
+ * "+ Add Character" creates a blank card immediately. Before this check, blank
+ * cards passed the old filter (it tested the placeholder `desc`, which is always
+ * set), so each one cost a profile analysis call and showed up in story prompts
+ * as "Character 3: Role: Supporting. Additional Character."
+ */
+export const isCastMember = (p: Persona | null | undefined): p is Persona =>
+  Boolean(p && (p.base64 || p.backstoryText?.trim() || (p.backstoryFiles && p.backstoryFiles.length > 0)));
 
 export interface StoryContext {
   title: string;

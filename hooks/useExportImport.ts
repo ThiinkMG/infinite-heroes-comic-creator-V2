@@ -10,6 +10,7 @@ import { useComicStore } from '../stores/useComicStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
 import type { ComicFace, Persona, StoryContext, StoryOutline } from '../types';
+import { DEFAULT_PAGE_LENGTH } from '../types';
 
 // ============================================================================
 // TYPES
@@ -296,7 +297,7 @@ export const useExportImport = (config: ExportImportConfig): UseExportImportRetu
           issueNumber: '1',
           useOverlayLogo: true,
           artStyle: 'Modern American Comic',
-          pageLength: 10,
+          pageLength: DEFAULT_PAGE_LENGTH,
         },
         extraPages: parsed.extraPages || 0,
         storyOutline: parsed.storyOutline || {

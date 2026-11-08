@@ -14,6 +14,7 @@ import {
   CharacterProfile,
   IdentityHeader,
   generateHardNegatives,
+  isCastMember,
 } from '../types';
 import { buildAllCharacterReferences } from '../utils/buildCharacterReference';
 import {
@@ -254,7 +255,7 @@ export const useGenerateProfile = (config: GenerateProfileConfig) => {
   // Store getters (for use in async callbacks)
   const getHero = () => useCharacterStore.getState().hero;
   const getFriend = () => useCharacterStore.getState().friend;
-  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters;
+  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters.filter(isCastMember);
 
   /**
    * Helper to ensure string fields are actually strings (AI sometimes returns objects)
@@ -636,11 +637,7 @@ For hardNegatives, analyze the image and add negatives for:
 
     if (hero) personas.push(hero);
     if (friend) personas.push(friend);
-    personas.push(...additionalChars.filter(c =>
-      c.base64 ||
-      (c.desc && c.desc.trim().length > 0) ||
-      (c.backstoryFiles && c.backstoryFiles.length > 0)
-    ));
+    personas.push(...additionalChars); // getAdditionalChars already drops blank cards
 
     const profiles: CharacterProfile[] = [];
     for (const p of personas) {

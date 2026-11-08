@@ -22,6 +22,7 @@ import {
   formatConsistencyInstruction,
   getShotInstructions,
   getFlashbackInstructions,
+  isCastMember,
 } from '../types';
 import { detectImageMimeType } from '../claudeHelpers';
 import { buildV2Prompt, type V2Character } from './promptAssemblerV2';
@@ -195,7 +196,7 @@ export const useGenerateImage = (config: GenerateImageConfig) => {
   // Store getters (for use in async callbacks)
   const getHero = () => useCharacterStore.getState().hero;
   const getFriend = () => useCharacterStore.getState().friend;
-  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters;
+  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters.filter(isCastMember);
   const getProfilesArray = () => useCharacterStore.getState().getProfilesArray();
   const getCharacterLocks = () => useCharacterStore.getState().characterLocks;
   const getReferencesArray = () => useCharacterStore.getState().getReferencesArray();

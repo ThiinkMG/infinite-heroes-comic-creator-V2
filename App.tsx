@@ -8,7 +8,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
 import jsPDF from 'jspdf';
-import { getComicConfig, ART_STYLES, GENRES, TONES, LANGUAGES, ComicFace, Beat, Persona, StoryContext, StoryOutline, CharacterProfile, NOVEL_MODE_BATCH_SIZE, generateHardNegatives, formatIdentityHeader, formatReinforcedScene, formatConsistencyInstruction, IdentityHeader, RegenerationMode, PageCharacterPlan, TransitionType, ShotType, PanelLayout, EmotionalBeat, PacingIntent, BalloonShape, RerollOptions, getLayoutInstructions, getShotInstructions, getTransitionContext, getFlashbackInstructions, NovelModeState, DraftKind } from './types';
+import { getComicConfig, DEFAULT_PAGE_LENGTH, isCastMember, ART_STYLES, GENRES, TONES, LANGUAGES, ComicFace, Beat, Persona, StoryContext, StoryOutline, CharacterProfile, NOVEL_MODE_BATCH_SIZE, generateHardNegatives, formatIdentityHeader, formatReinforcedScene, formatConsistencyInstruction, IdentityHeader, RegenerationMode, PageCharacterPlan, TransitionType, ShotType, PanelLayout, EmotionalBeat, PacingIntent, BalloonShape, RerollOptions, getLayoutInstructions, getShotInstructions, getTransitionContext, getFlashbackInstructions, NovelModeState, DraftKind } from './types';
 import { COMIC_PRESETS, ComicPreset } from './data/comicPresets';
 import { Setup } from './Setup';
 import { Book } from './Book';
@@ -237,7 +237,7 @@ const App: React.FC = () => {
     issueNumber: "1",
     useOverlayLogo: true,
     artStyle: ART_STYLES[0],
-    pageLength: 10
+    pageLength: DEFAULT_PAGE_LENGTH
   });
 
   const [generateFromOutline, setGenerateFromOutline] = useState(false);
@@ -286,7 +286,7 @@ const App: React.FC = () => {
   // They replace the previous ref pattern for accessing character data in async callbacks
   const getHero = () => useCharacterStore.getState().hero;
   const getFriend = () => useCharacterStore.getState().friend;
-  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters;
+  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters.filter(isCastMember);
   const getProfilesArray = () => useCharacterStore.getState().getProfilesArray();
 
   /** Debounce handle for cast persistence. */
@@ -1018,7 +1018,7 @@ const App: React.FC = () => {
       const personas: Persona[] = [];
       if (getHero()) personas.push(getHero());
       if (getFriend()) personas.push(getFriend());
-      personas.push(...getAdditionalChars().filter(c => c.base64 || (c.desc && c.desc.trim().length > 0) || (c.backstoryFiles && c.backstoryFiles.length > 0)));
+      personas.push(...getAdditionalChars()); // already limited to real cast members
       
       const profiles: CharacterProfile[] = [];
       for (const p of personas) {
@@ -1059,7 +1059,7 @@ const App: React.FC = () => {
       const personas: Persona[] = [];
       if (getHero()) personas.push(getHero());
       if (getFriend()) personas.push(getFriend());
-      personas.push(...getAdditionalChars().filter(c => c.base64 || (c.desc && c.desc.trim().length > 0) || (c.backstoryFiles && c.backstoryFiles.length > 0)));
+      personas.push(...getAdditionalChars()); // already limited to real cast members
 
       const persona = personas[index];
       if (!persona) return;
@@ -1678,7 +1678,7 @@ const App: React.FC = () => {
         setIsGeneratingProfiles(true);
         try {
             const store = useCharacterStore.getState();
-            const allChars = [getHero(), getFriend(), ...additionalCharacters].filter(Boolean) as Persona[];
+            const allChars = [getHero(), getFriend(), ...getAdditionalChars()].filter(Boolean) as Persona[];
             const existingProfiles = store.getProfilesArray();
 
             // Find which characters already have profiles
@@ -2436,7 +2436,7 @@ Create a powerful, memorable conclusion that honors the user's story path.
         issueNumber: "1",
         useOverlayLogo: true,
         artStyle: ART_STYLES[0],
-        pageLength: 10
+        pageLength: DEFAULT_PAGE_LENGTH
       });
       setCustomPremise("");
       setSelectedGenre(GENRES[0]);

@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { GENRES, PAGE_LENGTHS, LANGUAGES, ART_STYLES, getComicConfig } from '../types';
+import { GENRES, LANGUAGES, ART_STYLES } from '../types';
 
 // ============================================================================
 // TYPES
@@ -22,7 +22,12 @@ export interface SettingsState {
   customPremise: string;
   selectedLanguage: string;
   selectedArtStyle: string;
-  selectedPageLength: number;
+  /*
+   * No page length here. It lives only in App's `storyContext.pageLength`.
+   * A copy used to sit in this store, but nothing ever wrote to it, so the beat
+   * and outline writers read a frozen default of 6 while the page loop used the
+   * user's real choice. Read the length from `storyContext`.
+   */
 
   // Publisher settings
   publisherInfo: PublisherInfo;
@@ -117,23 +122,12 @@ export interface SettingsState {
   maxConcurrentPages: number;
 }
 
-export interface ComicConfig {
-  MAX_STORY_PAGES: number;
-  BACK_COVER_PAGE: number;
-  TOTAL_PAGES: number;
-  INITIAL_PAGES: number;
-  GATE_PAGE: number;
-  BATCH_SIZE: number;
-  DECISION_PAGES: number[];
-}
-
 export interface SettingsActions {
   // Setters for each setting
   setSelectedGenre: (genre: string) => void;
   setCustomPremise: (premise: string) => void;
   setSelectedLanguage: (language: string) => void;
   setSelectedArtStyle: (artStyle: string) => void;
-  setSelectedPageLength: (pageLength: number) => void;
   setPublisherInfo: (info: Partial<PublisherInfo>) => void;
   setGenerateFromOutline: (value: boolean) => void;
   setSkipProfileAnalysis: (value: boolean) => void;
@@ -154,9 +148,6 @@ export interface SettingsActions {
   // Bulk operations
   resetSettings: () => void;
   loadFromLocalStorage: () => void;
-
-  // Computed
-  getComicConfig: (extraPages?: number) => ComicConfig;
 }
 
 export type SettingsStore = SettingsState & SettingsActions;
@@ -170,7 +161,6 @@ const getDefaultSettings = (): SettingsState => ({
   customPremise: '',
   selectedLanguage: LANGUAGES[0]?.code || 'en-US',
   selectedArtStyle: ART_STYLES[0] || 'Modern American Comic',
-  selectedPageLength: PAGE_LENGTHS[1]?.value || 6, // Short Story (6 Pages) as default
   publisherInfo: {
     name: '',
     issueNumber: '1',
@@ -212,8 +202,6 @@ export const useSettingsStore = create<SettingsStore>()(
       setSelectedLanguage: (language) => set({ selectedLanguage: language }),
 
       setSelectedArtStyle: (artStyle) => set({ selectedArtStyle: artStyle }),
-
-      setSelectedPageLength: (pageLength) => set({ selectedPageLength: pageLength }),
 
       setPublisherInfo: (info) => set((state) => ({
         publisherInfo: { ...state.publisherInfo, ...info },
@@ -266,13 +254,6 @@ export const useSettingsStore = create<SettingsStore>()(
           console.warn('Failed to load settings from localStorage:', error);
         }
       },
-
-      // Compute comic configuration based on current settings
-      getComicConfig: (extraPages = 0) => {
-        const state = get();
-        const isNovelMode = !state.generateFromOutline;
-        return getComicConfig(state.selectedPageLength, extraPages, isNovelMode);
-      },
     }),
     {
       name: STORAGE_KEY,
@@ -282,7 +263,6 @@ export const useSettingsStore = create<SettingsStore>()(
         customPremise: state.customPremise,
         selectedLanguage: state.selectedLanguage,
         selectedArtStyle: state.selectedArtStyle,
-        selectedPageLength: state.selectedPageLength,
         publisherInfo: state.publisherInfo,
         generateFromOutline: state.generateFromOutline,
         skipProfileAnalysis: state.skipProfileAnalysis,
@@ -312,7 +292,6 @@ export const useSelectedGenre = () => useSettingsStore((state) => state.selected
 export const useCustomPremise = () => useSettingsStore((state) => state.customPremise);
 export const useSelectedLanguage = () => useSettingsStore((state) => state.selectedLanguage);
 export const useSelectedArtStyle = () => useSettingsStore((state) => state.selectedArtStyle);
-export const useSelectedPageLength = () => useSettingsStore((state) => state.selectedPageLength);
 export const usePublisherInfo = () => useSettingsStore((state) => state.publisherInfo);
 export const useGenerateFromOutline = () => useSettingsStore((state) => state.generateFromOutline);
 export const useSkipProfileAnalysis = () => useSettingsStore((state) => state.skipProfileAnalysis);

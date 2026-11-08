@@ -19,6 +19,7 @@ import {
   PacingIntent,
   LANGUAGES,
   getComicConfig,
+  isCastMember,
 } from '../types';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
@@ -81,7 +82,7 @@ export const useGenerateOutline = (config: GenerateOutlineConfig) => {
   // Store getters (for use in async callbacks)
   const getHero = () => useCharacterStore.getState().hero;
   const getFriend = () => useCharacterStore.getState().friend;
-  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters;
+  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters.filter(isCastMember);
 
   /**
    * Parse enhanced outline text into structured PageCharacterPlan array.
@@ -333,9 +334,11 @@ export const useGenerateOutline = (config: GenerateOutlineConfig) => {
 
     // Read settings from store
     const settingsState = useSettingsStore.getState();
-    const { selectedGenre, selectedLanguage, selectedPageLength } = settingsState;
+    const { selectedGenre, selectedLanguage } = settingsState;
 
-    const comicConfig = getComicConfig(selectedPageLength, extraPages);
+    // Outlines exist only in Outline Mode, so isNovelMode is always false here.
+    // The length comes from storyContext, the same value the page loop uses.
+    const comicConfig = getComicConfig(storyContext.pageLength, extraPages, false);
     const langName = LANGUAGES.find(l => l.code === selectedLanguage)?.name || "English";
 
     // Build character names list for the prompt
@@ -444,7 +447,7 @@ PAGE [N]:
 1. DO NOT REPEAT poses, locations, or camera angles between consecutive pages
 2. VARY layouts - don't use the same layout more than 3 times in a row
 3. SHOW character development through interactions
-4. Decision pages (${comicConfig.DECISION_PAGES.join(', ')}) should use dramatic layouts (splash or asymmetric)
+4. Plan exactly ${comicConfig.MAX_STORY_PAGES} story pages. The story must resolve (or reach its cliffhanger) on page ${comicConfig.MAX_STORY_PAGES}, not before
 
 OUTPUT: Structured text EXACTLY as shown above for each page.
 `;

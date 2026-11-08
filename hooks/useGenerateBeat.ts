@@ -22,6 +22,7 @@ import {
   getLayoutInstructions,
   getShotInstructions,
   getTransitionContext,
+  isCastMember,
 } from '../types';
 import { createTextContent, createImageContent, extractJsonFromResponse, getTextFromClaudeResponse, ClaudeContentBlock } from '../claudeHelpers';
 import { useCharacterStore } from '../stores/useCharacterStore';
@@ -113,7 +114,7 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
   // Store getters (for use in async callbacks)
   const getHero = () => useCharacterStore.getState().hero;
   const getFriend = () => useCharacterStore.getState().friend;
-  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters;
+  const getAdditionalChars = () => useCharacterStore.getState().additionalCharacters.filter(isCastMember);
 
   // Helper to get role label
   const getRoleLabel = (p: Persona): string => {
@@ -247,7 +248,7 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
 
     // Read settings from store
     const settingsState = useSettingsStore.getState();
-    const { selectedGenre, customPremise, selectedLanguage, selectedPageLength } = settingsState;
+    const { selectedGenre, customPremise, selectedLanguage } = settingsState;
 
     const hero = getHero();
     if (!hero) throw new Error("No Hero");
@@ -255,7 +256,9 @@ export const useGenerateBeat = (config: GenerateBeatConfig) => {
     const friend = getFriend();
     const additionalChars = getAdditionalChars();
 
-    const comicConfig = getComicConfig(selectedPageLength, extraPages);
+    // The user's chosen length lives on storyContext. It must match the page
+    // loop in App, or the writer ends the story on the wrong page.
+    const comicConfig = getComicConfig(storyContext.pageLength, extraPages);
     const isFinalPage = pageNum === comicConfig.MAX_STORY_PAGES;
     const langName = LANGUAGES.find(l => l.code === selectedLanguage)?.name || "English";
 

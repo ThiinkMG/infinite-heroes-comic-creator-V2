@@ -82,6 +82,14 @@ export const StorySettingsSection: React.FC<StorySettingsSectionProps> = ({
                         aria-label="Issue length"
                     >
                         {PAGE_LENGTHS.map(l => <option key={l.value} value={l.value} className="text-black">{l.label}</option>)}
+                        {/* A loaded draft can carry a length the list doesn't offer (older
+                            builds defaulted to 10). Show it as it is: otherwise the select
+                            displays "3 Pages" while 10 are generated. */}
+                        {!PAGE_LENGTHS.some(l => l.value === storyContext.pageLength) && (
+                            <option value={storyContext.pageLength} className="text-black">
+                                {`Custom (${storyContext.pageLength} Pages)`}
+                            </option>
+                        )}
                     </select>
                 </div>
                 <div>
